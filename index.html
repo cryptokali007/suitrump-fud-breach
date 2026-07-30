@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#050913" />
+    <meta name="description" content="SuiTrump: FUD Breach — a single-player browser arena shooter." />
+    <title>SuiTrump: FUD Breach</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main id="game-shell" aria-label="SuiTrump FUD Breach">
+      <canvas id="game-canvas" tabindex="0" aria-label="3D game canvas"></canvas>
+      <canvas id="hud-canvas" aria-hidden="true"></canvas>
+      <div id="touch-controls" aria-label="Touch controls">
+        <div id="move-pad" class="touch-pad"><span></span></div>
+        <div id="aim-pad" class="touch-pad"><span></span></div>
+        <button id="dash-button" class="touch-button" type="button">DASH</button>
+        <button id="pulse-button" class="touch-button" type="button">PULSE</button>
+      </div>
+      <div id="rotate-prompt" role="status">
+        <strong>ROTATE TO LANDSCAPE</strong>
+        <span>FUD Breach needs room for the crossfire.</span>
+      </div>
+      <section id="startup-error" role="alert" hidden>
+        <div class="startup-error-card">
+          <p class="startup-error-kicker">RENDERER OFFLINE</p>
+          <h1 id="startup-error-title">WebGL is unavailable</h1>
+          <p id="startup-error-detail">
+            This browser could not create the graphics context required by the game.
+          </p>
+          <p class="startup-error-action">Launch the desktop BAT again to open the game in Brave.</p>
+        </div>
+      </section>
+      <div class="scanlines" aria-hidden="true"></div>
+    </main>
+    <script type="module" src="./src/bootstrap.js"></script>
+  </body>
+</html>
