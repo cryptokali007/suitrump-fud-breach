@@ -16,6 +16,7 @@ async function reviewViewport(name, viewport, portrait = false) {
   });
   page.on("pageerror", (error) => errors.push({ viewport: name, type: "pageerror", text: String(error) }));
   await page.goto(url, { waitUntil: "networkidle" });
+  await page.getByRole("button", { name: "Deploy", exact: true }).waitFor();
   const visibility = await page.locator("#touch-controls").evaluate((element) => getComputedStyle(element).display);
   const rotatePrompt = await page.locator("#rotate-prompt").evaluate((element) => getComputedStyle(element).display);
   await page.screenshot({ path: path.join(outputRoot, `${name}-ready.png`), fullPage: true });

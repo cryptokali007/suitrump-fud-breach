@@ -1,9 +1,15 @@
+import suiCoinSound from "./assets/audio/sui-coin.wav?inline";
+import suitrumpCoinSound from "./assets/audio/suitrump-coin.wav?inline";
+
+const coinSounds = { sui: suiCoinSound, suitrump: suitrumpCoinSound };
+
 export class AudioDirector {
   constructor() {
     this.context = null;
     this.master = null;
     this.captureDestination = null;
     this.enabled = true;
+    this.coinBuffers = {};
   }
 
   unlock() {
@@ -17,6 +23,14 @@ export class AudioDirector {
       this.master.connect(this.context.destination);
       this.captureDestination = this.context.createMediaStreamDestination();
       this.master.connect(this.captureDestination);
+      for (const [kind, url] of Object.entries(coinSounds)) {
+        const bytes = Uint8Array.from(atob(url.slice(url.indexOf(",") + 1)), (character) => character.charCodeAt(0));
+        this.context.decodeAudioData(bytes.buffer).then((buffer) => {
+          this.coinBuffers[kind] = buffer;
+        }).catch(() => {
+          // The existing synthesized pickup chime works if a replacement WAV cannot be decoded.
+        });
+      }
     }
     if (this.context.state === "suspended") this.context.resume();
   }
@@ -109,6 +123,19 @@ export class AudioDirector {
   pickup() {
     this.tone(520, 0.12, { endFrequency: 1040, volume: 0.12, type: "sine" });
     window.setTimeout(() => this.tone(780, 0.14, { endFrequency: 1320, volume: 0.1, type: "sine" }), 45);
+  }
+
+  coinPickup(kind) {
+    if (!this.enabled || !this.context || !this.master) return;
+    const buffer = this.coinBuffers[kind];
+    if (!buffer) {
+      this.pickup();
+      return;
+    }
+    const source = this.context.createBufferSource();
+    source.buffer = buffer;
+    source.connect(this.master);
+    source.start();
   }
 
   stage() {

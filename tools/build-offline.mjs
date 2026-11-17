@@ -14,6 +14,7 @@ const result = await build({
   build: {
     write: false,
     modulePreload: false,
+    assetsInlineLimit: Infinity,
     rollupOptions: { input: path.join(root, "src/game.js"), output: { inlineDynamicImports: true } },
   },
 });

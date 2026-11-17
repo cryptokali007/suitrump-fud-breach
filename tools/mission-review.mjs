@@ -22,6 +22,7 @@ async function capture(name) {
 }
 
 await page.goto(url, { waitUntil: "networkidle" });
+await page.getByRole("button", { name: "Deploy", exact: true }).waitFor();
 await page.keyboard.press("Space");
 await page.evaluate(() => window.advanceTime?.(600));
 await capture("01-breach");

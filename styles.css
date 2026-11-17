@@ -61,7 +61,8 @@ body {
   pointer-events: none;
 }
 
-#mission-action {
+#mission-action,
+#score-action {
   position: absolute;
   z-index: 2;
   top: min(calc(50% + 115px), calc(100% - 48px));
@@ -84,7 +85,23 @@ body {
   background: #c4f2ff;
 }
 
+#score-action {
+  left: calc(50% + 94px);
+  color: #c2efff;
+  background: #142842;
+  box-shadow: none;
+}
+
+#score-action:hover {
+  background: #203d60;
+}
+
+.can-share-score #mission-action {
+  left: calc(50% - 94px);
+}
+
 #mission-action:focus-visible,
+#score-action:focus-visible,
 #pause-button:focus-visible {
   outline: 2px solid var(--gold);
   outline-offset: 4px;
@@ -95,12 +112,75 @@ body {
 }
 
 @container (width < 700px) or (height < 390px) {
-  #mission-action {
+  #mission-action,
+  #score-action {
     top: min(calc(50% + 48px), calc(100% - 36px));
     width: 140px;
     min-height: 32px;
     font-size: 12px;
   }
+  .can-share-score #mission-action {
+    left: calc(50% - 74px);
+  }
+  #score-action {
+    left: calc(50% + 74px);
+  }
+}
+
+#score-dialog {
+  width: min(430px, calc(100% - 28px));
+  max-height: calc(100% - 20px);
+  border: 1px solid #68c9ed;
+  border-radius: 6px;
+  padding: clamp(12px, 3vw, 26px);
+  color: #e3f6ff;
+  background: #0e1c30;
+}
+
+#score-dialog::backdrop {
+  background: rgb(3 9 19 / 72%);
+}
+
+#score-dialog h2 {
+  margin: 0 0 10px;
+  font: 850 20px/1.2 system-ui;
+}
+
+#score-summary {
+  width: 100%;
+  height: 6em;
+  resize: none;
+  padding: 8px;
+  border: 1px solid #456780;
+  border-radius: 3px;
+  color: #d9f4ff;
+  background: #091527;
+  font: 600 13px/1.4 system-ui;
+}
+
+.score-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.score-dialog-actions button {
+  min-height: 30px;
+  border: 1px solid #5d9ebe;
+  border-radius: 3px;
+  padding: 4px 8px;
+  color: #e3f6ff;
+  background: #173554;
+  font: 750 12px system-ui;
+  cursor: pointer;
+}
+
+#score-feedback {
+  min-height: 1.2em;
+  margin: 8px 0 0;
+  color: #b2daeb;
+  font: 12px/1.2 system-ui;
 }
 
 .scanlines {
@@ -173,6 +253,7 @@ body {
 .startup-failed #game-canvas,
 .startup-failed #hud-canvas,
 .startup-failed #mission-action,
+.startup-failed #score-action,
 .startup-failed #touch-controls,
 .startup-failed #rotate-prompt {
   visibility: hidden;

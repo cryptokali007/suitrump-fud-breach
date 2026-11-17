@@ -1,9 +1,7 @@
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { palette } from "./config.js";
-import pulseChargeUrl from "./assets/pulse-charge.webp?inline";
-
-let pulseChargeFace;
+import { createCoinModel } from "./coin-models.js";
 
 export function material(color, options = {}) {
   const mat = new THREE.MeshStandardMaterial({
@@ -43,10 +41,10 @@ function capsuleLike(mat, radius, height, position, segments = 8) {
 
 export function createPlayerModel() {
   const group = new THREE.Group();
-  const suit = material(0x174380, { roughness: 0.59, metalness: 0.22, flatShading: false });
+  const suit = material(0x102342, { roughness: 0.71, metalness: 0.12, flatShading: false });
   const blue = material(palette.playerBlue, { roughness: 0.44, metalness: 0.08, flatShading: false });
   const white = material(palette.white, { roughness: 0.65, metalness: 0.12 });
-  const tie = material(palette.playerTie, { emissive: true, emissiveIntensity: 0.18 });
+  const tie = material(0x296dd0, { roughness: 0.56, metalness: 0.15 });
   const hair = material(palette.playerHair, { roughness: 0.52, metalness: 0.13, flatShading: false });
   const gold = material(palette.gold, { emissive: true, emissiveIntensity: 0.32 });
   const glow = material(palette.sui, { emissive: true, emissiveIntensity: 1.15 });
@@ -55,24 +53,29 @@ export function createPlayerModel() {
   const torso = beveledBox(suit, [1.01, 1.1, 0.58], [0, 1.32, 0], 0.12);
   const shirt = beveledBox(white, [0.38, 0.74, 0.08], [0, 0.05, 0.296], 0.025);
   const neckTie = beveledBox(tie, [0.11, 0.55, 0.07], [0, 0.03, 0.341], 0.021);
-  const backplate = beveledBox(lapel, [0.61, 0.42, 0.08], [0, 0.13, -0.29], 0.04);
+  const backSeam = box(lapel, [0.016, 0.82, 0.024], [0, -0.06, -0.288]);
+  const shirtCollar = beveledBox(white, [0.49, 0.09, 0.25], [0, 0.51, -0.12], 0.03);
   const head = beveledBox(blue, [0.69, 0.67, 0.63], [0, 2.18, 0], 0.16);
   const nose = beveledBox(blue, [0.17, 0.18, 0.19], [0, 2.16, 0.34], 0.065);
-  torso.add(shirt, neckTie, backplate);
+  torso.add(shirt, neckTie, backSeam, shirtCollar);
   for (const side of [-1, 1]) {
     const collar = beveledBox(lapel, [0.1, 0.53, 0.06], [side * 0.22, 0.25, 0.281], 0.02);
     collar.rotation.z = side * -0.3;
-    const backLight = box(glow, [0.032, 0.25, 0.025], [side * 0.24, 0.13, -0.342]);
-    torso.add(collar, backLight);
+    torso.add(collar);
     group.add(beveledBox(lapel, [0.14, 0.052, 0.055], [side * 0.14, 2.27, 0.314], 0.025));
   }
   group.add(torso, head, nose);
 
-  const hairShape = new THREE.SphereGeometry(1, 14, 8);
-  for (let index = 0; index < 3; index += 1) {
-    const sweep = mesh(hairShape, hair, -0.035 - index * 0.045, 2.53 + index * 0.058, -0.07 + index * 0.15);
-    sweep.scale.set(0.402 - index * 0.018, 0.13 + index * 0.019, 0.29 - index * 0.03);
-    sweep.rotation.z = -0.18;
+  const hairShape = new THREE.SphereGeometry(1, 20, 12);
+  const hairShadow = material(0xc38b29, { roughness: 0.56, flatShading: false });
+  const backHair = mesh(hairShape, hairShadow, 0, 2.43, -0.19);
+  backHair.scale.set(0.36, 0.23, 0.22);
+  group.add(backHair);
+  for (let index = 0; index < 5; index += 1) {
+    const sweep = mesh(hairShape, hair, -0.034 - index * 0.025, 2.51 + index * 0.044, -0.15 + index * 0.10);
+    sweep.scale.set(0.42 - index * 0.014, 0.12 + index * 0.016, 0.22);
+    sweep.rotation.z = -0.19;
+    sweep.rotation.y = -0.26;
     group.add(sweep);
   }
 
@@ -222,26 +225,16 @@ export function createBossModel() {
 }
 
 export function createPickupModel(kind) {
+  if (kind === "sui" || kind === "suitrump") return createCoinModel(kind);
   const group = new THREE.Group();
-  const color = kind === "health" ? palette.green : kind === "armor" ? palette.gold : palette.sui;
+  const color = kind === "health" ? palette.green : palette.gold;
   const glow = material(color, { emissive: true, emissiveIntensity: 2.2 });
   const inner = material(palette.white, { emissive: color, emissiveIntensity: 0.7 });
   const outer = mesh(new THREE.TorusGeometry(0.48, 0.11, 8, 18), glow, 0, 0, 0);
-  const core = kind === "sui"
-    ? mesh(new THREE.CircleGeometry(0.41, 32), pulseChargeMaterial())
-    : mesh(kind === "health" ? new THREE.BoxGeometry(0.38, 0.38, 0.38) : new THREE.OctahedronGeometry(0.32, 0), inner);
+  const core = mesh(kind === "health" ? new THREE.BoxGeometry(0.38, 0.38, 0.38) : new THREE.OctahedronGeometry(0.32, 0), inner);
   group.add(outer, core);
   group.userData.parts = { outer, core };
   return group;
-}
-
-function pulseChargeMaterial() {
-  if (!pulseChargeFace) {
-    const map = new THREE.TextureLoader().load(pulseChargeUrl);
-    map.colorSpace = THREE.SRGBColorSpace;
-    pulseChargeFace = new THREE.MeshBasicMaterial({ map, side: THREE.DoubleSide, toneMapped: false });
-  }
-  return pulseChargeFace;
 }
 
 export function createAquaticMascot(kind) {

@@ -18,7 +18,7 @@ page.on("console", (message) => {
 page.on("pageerror", (error) => errors.push({ type: "pageerror", text: String(error) }));
 
 await page.goto(url, { waitUntil: "networkidle" });
-await page.waitForTimeout(700);
+await page.getByRole("button", { name: "Deploy", exact: true }).waitFor();
 await page.screenshot({ path: path.join(outputRoot, "ready.png"), fullPage: true });
 
 await page.keyboard.press("Space");

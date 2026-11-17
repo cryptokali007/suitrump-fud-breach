@@ -1,6 +1,6 @@
 # SuiTrump: FUD Breach
 
-SuiTrump: FUD Breach is a standalone, single-player Three.js arcade shooter by [cryptokali007](https://github.com/cryptokali007). Take the blue mascot through the broadcast facility, clear the FUD defenders, cut the relays, and defeat the Mainstream Media Machine before extraction.
+SuiTrump: FUD Breach is a standalone, single-player Three.js arcade shooter by [cryptokali007](https://github.com/cryptokali007). Play as Sui Trump, the blue-faced president of the Sui Memeverse. Clear the FUD defenders, cut the relays, and defeat the Mainstream Media Machine before extraction.
 
 The project is fully local and static. It has no wallet, chain, RPC, account, analytics, CDN, backend, API key, or cloud dependency.
 
@@ -64,11 +64,24 @@ PC is the primary target. Missions start in first person. Press `V` for the chas
 
 The Repeater fires quickly. Riptide deals heavier damage and splashes nearby targets. Rickroll disables a scam bot or rug runner on a direct hit and takes ten seconds to recharge.
 
-The pulse-charge sprite is adapted from the first frame of MMAC's SUI motion atlas and embedded in the build.
-
 ## Scoring
 
-Chain takedowns within four seconds to build a multiplier up to 2×. Destroying relays, defeating the boss, and extracting quickly add points. Boss reinforcements can drop supplies. Clearing the mission records a personal best in the current browser. The result screen shows points, clearance time, accuracy, KOs, longest chain, and rank.
+Chain takedowns within four seconds to build a multiplier up to 2×. Destroying relays, defeating the boss, and extracting quickly add points. The result screen shows points, clearance time, accuracy, KOs, longest chain, rank, and the best clear of the current session.
+
+| Pickup | Points | Effect |
+| --- | ---: | --- |
+| SUI coin | 260 | Recharges 2.4 seconds of Pulse |
+| SuiTrump coin | 600 | Resets Dash cooldown |
+
+The SUI coin uses the original MMAC sprite atlas and spin timing. The SuiTrump coin uses the same animated body with a portrait on the face. To replace either chime, overwrite `src/assets/audio/sui-coin.wav` or `src/assets/audio/suitrump-coin.wav` with a PCM WAV and rebuild.
+
+After extraction, **Share score** opens a copyable result and a downloadable JSON receipt. Scores stay in the current tab until the player copies or downloads a result. To check a receipt locally, run:
+
+```shell
+npm run verify:score -- path/to/score.json
+```
+
+The verifier checks the checksum, replays scoring events, and compares the resulting points and rank. Receipts are player-supplied under a trust-based system.
 
 ## Build and verify
 

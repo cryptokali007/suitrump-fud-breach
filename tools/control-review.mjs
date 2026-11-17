@@ -23,6 +23,7 @@ async function state() {
 }
 
 await page.goto(url, { waitUntil: "networkidle" });
+await page.getByRole("button", { name: "Deploy", exact: true }).waitFor();
 await page.keyboard.press("Space");
 await page.evaluate(() => window.advanceTime(100));
 check("start flow", (await state()).phase === "playing", await state());

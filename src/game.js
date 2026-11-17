@@ -5,6 +5,9 @@ import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js"
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { AudioDirector } from "./audio.js";
 import { addBackdrop, createArenaFloor, createCover, createNightSky } from "./arena-art.js";
+import { updateCoinFrames } from "./coin-models.js";
+import { bindScorePanel } from "./score-panel.js";
+import { COINS, ENCOUNTERS, RunScore, SCORE_GAME, SCORE_VERSION, runRank, scoreTime } from "./scoring.js";
 import {
   CHAIN_WINDOW,
   ENEMY_TYPES,
@@ -45,15 +48,17 @@ const shell = document.getElementById("game-shell");
 const canvas = document.getElementById("game-canvas");
 const hud = document.getElementById("hud-canvas");
 const missionAction = document.getElementById("mission-action");
+const scoreAction = document.getElementById("score-action");
+const scoreDialog = document.getElementById("score-dialog");
 const weaponButton = document.getElementById("weapon-button");
 const ui = hud.getContext("2d");
 const audio = new AudioDirector();
 const query = new URLSearchParams(window.location.search);
 const QA_MODE = query.get("qa") === "1";
 const TEST_MODE = QA_MODE || query.get("test") === "1";
-const BEST_SCORE_KEY = "fud-breach-best-score";
 const QUALITY_KEY = "fud-breach-quality";
 const QUALITY_LEVELS = ["high", "medium", "low"];
+let runScore = new RunScore();
 
 const renderer = new THREE.WebGLRenderer({
   canvas,
@@ -108,11 +113,12 @@ const state = {
   stageTime: 0,
   stageBanner: 0,
   score: 0,
-  bestScore: TEST_MODE ? 0 : readBestScore(),
+  bestScore: 0,
   newBest: false,
   chain: 0,
   chainUntil: 0,
   peakChain: 0,
+  coinFlash: 0,
   kills: 0,
   shots: 0,
   hits: 0,
@@ -380,6 +386,8 @@ function addBlock(x, z, sx, sy, sz, mat, label, collide = true) {
 
 function resetGame(startPlaying = false) {
   clearDynamicEntities();
+  if (scoreDialog.open) scoreDialog.close();
+  runScore = new RunScore();
   setPhase(startPlaying ? "playing" : "ready");
   state.stage = "breach";
   state.time = 0;
@@ -391,6 +399,7 @@ function resetGame(startPlaying = false) {
   state.chain = 0;
   state.chainUntil = 0;
   state.peakChain = 0;
+  state.coinFlash = 0;
   state.rickrollTimer = 0;
   selectWeapon("repeater");
   state.kills = 0;
@@ -428,6 +437,8 @@ function resetGame(startPlaying = false) {
   if (boss?.group) dynamicRoot.remove(boss.group);
   boss = null;
   spawnBreachEncounter();
+  updateCoinFrames(0);
+  if (startPlaying) createPickup("sui", 0, 24, "opening");
   updatePlayerModel(1);
   updateCamera(1);
   render();
@@ -457,6 +468,8 @@ function setPhase(phase) {
   state.phase = phase;
   shell.dataset.phase = phase;
   missionAction.hidden = phase === "playing";
+  scoreAction.hidden = phase !== "victory" || TEST_MODE;
+  shell.classList.toggle("can-share-score", !scoreAction.hidden);
   if (phase === "ready") missionAction.textContent = "Deploy";
   if (phase === "paused") missionAction.textContent = "Resume";
   if (phase === "gameover" || phase === "victory") missionAction.textContent = "Play again";
@@ -489,13 +502,11 @@ function activateMissionAction() {
 }
 
 function spawnBreachEncounter() {
-  const kinds = [ENEMY_TYPES.agent, ENEMY_TYPES.agent, ENEMY_TYPES.farmer, ENEMY_TYPES.agent, ENEMY_TYPES.bot];
-  kinds.forEach((kind, index) => spawnEnemy(kind, OUTER_SPAWNS[index], `breach-${index}`));
+  ENCOUNTERS.breach.forEach((kind, index) => spawnEnemy(ENEMY_TYPES[kind], OUTER_SPAWNS[index], `breach-${index}`));
 }
 
 function spawnRelayEncounter() {
-  const kinds = [ENEMY_TYPES.agent, ENEMY_TYPES.sniper, ENEMY_TYPES.bot, ENEMY_TYPES.farmer, ENEMY_TYPES.agent, ENEMY_TYPES.sniper];
-  kinds.forEach((kind, index) => spawnEnemy(kind, INNER_SPAWNS[index], `relay-${index}`));
+  ENCOUNTERS.relay.forEach((kind, index) => spawnEnemy(ENEMY_TYPES[kind], INNER_SPAWNS[index], `relay-${index}`));
 }
 
 function spawnEnemy(kind, point, id = `${kind.id}-${Math.random().toString(36).slice(2)}`, reinforcement = false) {
@@ -543,6 +554,7 @@ function closeGate() {
 }
 
 function advanceMission(nextStage) {
+  awardScore("stage", nextStage);
   state.stage = nextStage;
   state.stageTime = 0;
   state.stageBanner = 2.8;
@@ -551,6 +563,7 @@ function advanceMission(nextStage) {
   addShockwave(state.player.x, state.player.z, palette.sui, 10);
   if (nextStage === "relays") {
     openGate();
+    createPickup("suitrump", 0, -4, "gate");
     relays.forEach((relay) => {
       relay.active = true;
       relay.group.visible = true;
@@ -622,13 +635,9 @@ function updateMission(dt) {
 
 function completeMission() {
   if (state.phase !== "playing") return;
-  state.score += Math.max(0, Math.round(9000 - state.time * 42));
-  if (!TEST_MODE) state.bestScore = Math.max(state.bestScore, readBestScore());
+  awardScore("extract");
   state.newBest = state.score > state.bestScore;
-  if (state.newBest) {
-    state.bestScore = state.score;
-    if (!TEST_MODE) writeSetting(BEST_SCORE_KEY, String(state.bestScore));
-  }
+  if (state.newBest) state.bestScore = state.score;
   setPhase("victory");
   state.objective = "Breach complete.";
   clearInput();
@@ -638,13 +647,34 @@ function completeMission() {
   burstParticles(extraction.x, 1.2, extraction.z, palette.sui, 90, 1.5, 9);
 }
 
+function awardScore(type, id, kind) {
+  const points = runScore.record({ type, at: scoreTime(state.time), id, kind });
+  state.score = runScore.score;
+  return points;
+}
+
+function scoreStats() {
+  return { health: Math.ceil(state.player.health), shots: state.shots, hits: state.hits, takedowns: state.kills, peakChain: state.peakChain };
+}
+
+function scoreReceipt() {
+  const durationMs = scoreTime(state.time);
+  const stats = scoreStats();
+  return {
+    game: SCORE_GAME, version: SCORE_VERSION, score: state.score, durationMs, stats,
+    rank: runRank(state.score, durationMs, stats), events: runScore.events,
+  };
+}
+
 function setupInput() {
   missionAction.addEventListener("click", activateMissionAction);
+  bindScorePanel(scoreAction, scoreDialog, scoreReceipt);
   document.getElementById("pause-button").addEventListener("click", pauseGame);
   weaponButton.addEventListener("click", () => {
     selectWeapon(WEAPON_SLOTS[(WEAPON_SLOTS.indexOf(state.weapon) + 1) % WEAPON_SLOTS.length]);
   });
   window.addEventListener("keydown", (event) => {
+    if (scoreDialog.open) return;
     const key = normalizeKey(event);
     if ((key === "space" || key === "enter") && event.target instanceof HTMLButtonElement) return;
     if (shouldBlockKey(key)) event.preventDefault();
@@ -890,11 +920,6 @@ function writeSetting(key, value) {
   }
 }
 
-function readBestScore() {
-  const score = Number(readSetting(BEST_SCORE_KEY));
-  return Number.isSafeInteger(score) && score > 0 ? score : 0;
-}
-
 function readQuality() {
   const requested = query.get("quality");
   if (QUALITY_LEVELS.includes(requested)) return requested;
@@ -1054,13 +1079,14 @@ function damageTarget(target, amount, type) {
 
 function killEnemy(enemy) {
   const index = state.enemies.indexOf(enemy);
-  if (index !== -1) state.enemies.splice(index, 1);
+  if (index === -1) return;
+  state.enemies.splice(index, 1);
   dynamicRoot.remove(enemy.group);
+  awardScore("enemy", enemy.id, enemy.kind.id);
   if (!enemy.reinforcement) {
-    state.chain = state.time < state.chainUntil ? state.chain + 1 : 1;
-    state.chainUntil = state.time + CHAIN_WINDOW;
-    state.peakChain = Math.max(state.peakChain, state.chain);
-    state.score += Math.round(enemy.kind.score * chainMultiplier(state.chain));
+    state.chain = runScore.chain;
+    state.chainUntil = runScore.lastTakedownAt / 1000 + CHAIN_WINDOW;
+    state.peakChain = runScore.peakChain;
   }
   state.kills += 1;
   audio.kill();
@@ -1069,13 +1095,13 @@ function killEnemy(enemy) {
   const dropRoll = Math.random();
   if (state.player.health < 55 && dropRoll < 0.45) createPickup("health", enemy.x, enemy.z);
   else if (state.player.armor < 25 && dropRoll < 0.6) createPickup("armor", enemy.x, enemy.z);
-  else if (dropRoll < 0.72) createPickup("sui", enemy.x, enemy.z, enemy.reinforcement ? 0 : 260);
+  else if (!enemy.reinforcement && dropRoll < 0.72) createPickup("sui", enemy.x, enemy.z, enemy.id);
 }
 
 function destroyRelay(relay) {
   relay.active = false;
   relay.group.visible = false;
-  state.score += 850;
+  awardScore("relay", relay.id);
   state.cameraShake = Math.max(state.cameraShake, 0.5);
   burstParticles(relay.x, 2.6, relay.z, palette.sui, 54, 1.0, 8);
   addShockwave(relay.x, relay.z, palette.sui, 9);
@@ -1087,7 +1113,7 @@ function destroyBoss() {
   const { x, z, group } = boss;
   dynamicRoot.remove(group);
   boss = null;
-  state.score += 5000;
+  awardScore("boss");
   state.cameraShake = 0.9;
   burstParticles(x, 3.2, z, palette.danger, 110, 1.6, 11);
   burstParticles(x, 3.2, z, palette.gold, 80, 1.4, 9);
@@ -1095,11 +1121,12 @@ function destroyBoss() {
   audio.kill();
 }
 
-function createPickup(kind, x, z, points = 0) {
+function createPickup(kind, x, z, source) {
   const group = createPickupModel(kind);
   group.position.set(x, 1.05, z);
   dynamicRoot.add(group);
-  state.pickups.push({ kind, group, x, z, points, radius: 0.8, life: 18, phase: random(0, TAU) });
+  const life = source === "opening" || source === "gate" ? Infinity : 18;
+  state.pickups.push({ kind, group, x, z, source, radius: 0.8, life, phase: random(0, TAU) });
 }
 
 function fireEnemyShot(enemy, options = {}) {
@@ -1162,6 +1189,7 @@ function update(dt) {
   state.hitMarker = Math.max(0, state.hitMarker - dt);
   state.cameraShake = Math.max(0, state.cameraShake - dt * 1.8);
   state.messageTimer = Math.max(0, state.messageTimer - dt);
+  state.coinFlash = Math.max(0, state.coinFlash - dt);
   state.player.recoil = Math.max(0, state.player.recoil - dt * 1.8);
 
   animateWorld(dt);
@@ -1322,6 +1350,7 @@ function removeShot(index) {
 }
 
 function updatePickups(dt) {
+  updateCoinFrames(state.time);
   for (let index = state.pickups.length - 1; index >= 0; index -= 1) {
     const pickup = state.pickups[index];
     pickup.life -= dt;
@@ -1342,16 +1371,28 @@ function updatePickups(dt) {
 }
 
 function collectPickup(pickup) {
+  const coin = COINS[pickup.kind];
+  if (coin) {
+    const points = awardScore("coin", pickup.source, pickup.kind);
+    const prefix = points > 0 ? `+${points}  ·  ` : "";
+    if (pickup.kind === "sui") {
+      state.player.pulseCooldown = Math.max(0, state.player.pulseCooldown - 2.4);
+      setMessage(`${prefix}PULSE CHARGED`, 1.6);
+    } else {
+      state.player.dashCooldown = 0;
+      setMessage(`${prefix}DASH RECHARGED`, 1.6);
+    }
+    state.coinFlash = 0.75;
+    audio.coinPickup(pickup.kind);
+    burstParticles(pickup.x, 1, pickup.z, coin.color, 27, 0.5, 5.4);
+    return;
+  }
   if (pickup.kind === "health") {
     state.player.health = Math.min(state.player.maxHealth, state.player.health + 28);
     setMessage("HEALTH RESTORED", 1.2);
   } else if (pickup.kind === "armor") {
     state.player.armor = Math.min(state.player.maxArmor, state.player.armor + 24);
     setMessage("ARMOR BUFFER", 1.2);
-  } else {
-    state.score += pickup.points;
-    state.player.pulseCooldown = Math.max(0, state.player.pulseCooldown - 2.4);
-    setMessage("PULSE CHARGE COLLECTED", 1.2);
   }
   audio.pickup();
   burstParticles(pickup.x, 1, pickup.z, pickup.kind === "health" ? palette.green : palette.sui, 20, 0.45, 4.5);
@@ -1681,7 +1722,9 @@ function collectLabels() {
     queueLabel({ text: `RELAY ${relay.health}/${relay.maxHealth}`, x: relay.x, y: 4.85, z: relay.z, color: "#73ddff", size: 12, alpha: 1 });
   });
   state.pickups.forEach((pickup) => {
-    queueLabel({ text: pickup.kind.toUpperCase(), x: pickup.x, y: 1.85, z: pickup.z, color: pickup.kind === "health" ? "#54efac" : pickup.kind === "armor" ? "#ffd45f" : "#65d7ff", size: 10, alpha: 0.92 });
+    const coin = COINS[pickup.kind];
+    const label = coin?.name ?? pickup.kind;
+    queueLabel({ text: label.toUpperCase(), x: pickup.x, y: coin ? 1.96 : 1.85, z: pickup.z, color: pickup.kind === "health" ? "#54efac" : pickup.kind === "sui" ? "#65d7ff" : "#ffd45f", size: 10, alpha: 0.92 });
   });
   if (extraction?.active) queueLabel({ text: "EXTRACT", x: extraction.x, y: 3.1, z: extraction.z, color: "#65d7ff", size: 15, alpha: 1 });
 }
@@ -1741,6 +1784,10 @@ function drawStatusHud(width, height) {
   ui.font = compact ? "700 9px system-ui" : "700 11px system-ui";
   const weaponLabel = WEAPONS[state.weapon].label;
   const recharge = state.weapon === "rickroll" && state.player.rickrollCooldown > 0 ? ` (${Math.ceil(state.player.rickrollCooldown)}s)` : "";
+  if (state.coinFlash > 0) {
+    ui.fillStyle = "#ffdc78";
+    ui.font = compact ? "900 10px system-ui" : "900 13px system-ui";
+  }
   ui.fillText(`${state.score.toLocaleString()} PTS  ·  ${weaponLabel}${recharge}`, x + 14, y + (compact ? 36 : 44), panelWidth - 28);
 
   const barWidth = panelWidth - (compact ? 28 : 86);
@@ -1931,7 +1978,7 @@ function drawStartScreen(width, height) {
   }
   if (state.bestScore > 0 && !compact) {
     ui.fillStyle = "#ffd45f";
-    ui.fillText(`PERSONAL BEST  ${state.bestScore.toLocaleString()}`, width / 2, y + 260);
+    ui.fillText(`SESSION BEST  ${state.bestScore.toLocaleString()}`, width / 2, y + 260);
   }
   ui.textAlign = "left";
 }
@@ -1975,7 +2022,7 @@ function drawEndScreen(width, height, won) {
   ui.font = compact ? "800 10px system-ui" : "800 15px system-ui";
   ui.fillText(`${state.score.toLocaleString()} PTS  ·  ${formatTime(state.time)}  ·  ${state.kills} KOs  ·  ${accuracy}% ACC`, width / 2, y + panelHeight * 0.54);
   ui.fillStyle = state.newBest ? "#ffd45f" : "#9fb6cb";
-  const best = state.newBest ? "NEW PERSONAL BEST" : state.bestScore ? `BEST ${state.bestScore.toLocaleString()}` : "NO CLEARS YET";
+  const best = state.newBest ? "NEW SESSION BEST" : state.bestScore ? `SESSION BEST ${state.bestScore.toLocaleString()}` : "NO CLEARS YET";
   ui.fillText(`${best}  ·  LONGEST CHAIN ${state.peakChain}`, width / 2, y + panelHeight * 0.66);
   ui.textAlign = "left";
 }
@@ -2046,12 +2093,7 @@ function project(x, y, z, width, height) {
 }
 
 function calculateRank() {
-  const accuracy = state.shots > 0 ? state.hits / state.shots : 0;
-  const score = state.score + Math.max(0, 6000 - state.time * 24) + accuracy * 1800 + state.player.health * 10;
-  if (score >= 20500) return "S  /  VANGUARD";
-  if (score >= 16500) return "A  /  SIGNAL BREAKER";
-  if (score >= 12500) return "B  /  OPERATOR";
-  return "C  /  SURVIVOR";
+  return runRank(state.score, scoreTime(state.time), scoreStats());
 }
 
 function formatTime(seconds) {
