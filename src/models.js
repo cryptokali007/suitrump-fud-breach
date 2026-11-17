@@ -1,5 +1,9 @@
 import * as THREE from "three";
+import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { palette } from "./config.js";
+import pulseChargeUrl from "./assets/pulse-charge.webp?inline";
+
+let pulseChargeFace;
 
 export function material(color, options = {}) {
   const mat = new THREE.MeshStandardMaterial({
@@ -29,51 +33,68 @@ function box(mat, size, position) {
   return mesh(new THREE.BoxGeometry(size[0], size[1], size[2]), mat, position[0], position[1], position[2]);
 }
 
+function beveledBox(mat, [width, height, depth], [x, y, z], radius = 0.06) {
+  return mesh(new RoundedBoxGeometry(width, height, depth, 2, radius), mat, x, y, z);
+}
+
 function capsuleLike(mat, radius, height, position, segments = 8) {
   return mesh(new THREE.CapsuleGeometry(radius, height, 4, segments), mat, position[0], position[1], position[2]);
 }
 
 export function createPlayerModel() {
   const group = new THREE.Group();
-  const suit = material(palette.playerSuit, { roughness: 0.55, metalness: 0.4 });
-  const blue = material(palette.playerBlue, { roughness: 0.5, metalness: 0.22 });
+  const suit = material(0x174380, { roughness: 0.59, metalness: 0.22, flatShading: false });
+  const blue = material(palette.playerBlue, { roughness: 0.44, metalness: 0.08, flatShading: false });
   const white = material(palette.white, { roughness: 0.65, metalness: 0.12 });
   const tie = material(palette.playerTie, { emissive: true, emissiveIntensity: 0.18 });
-  const hair = material(palette.playerHair, { roughness: 0.48, metalness: 0.25 });
+  const hair = material(palette.playerHair, { roughness: 0.52, metalness: 0.13, flatShading: false });
   const gold = material(palette.gold, { emissive: true, emissiveIntensity: 0.32 });
-  const glow = material(palette.sui, { emissive: true, emissiveIntensity: 2.2 });
+  const glow = material(palette.sui, { emissive: true, emissiveIntensity: 1.15 });
+  const lapel = material(0x08182f, { roughness: 0.58, metalness: 0.21 });
 
-  const torso = box(suit, [0.92, 1.12, 0.52], [0, 1.32, 0]);
-  const shirt = box(white, [0.42, 0.72, 0.08], [0, 1.36, 0.3]);
-  const neckTie = box(tie, [0.14, 0.68, 0.08], [0, 1.3, 0.36]);
-  const head = box(blue, [0.68, 0.66, 0.62], [0, 2.18, 0]);
-  const nose = box(blue, [0.2, 0.18, 0.2], [0, 2.17, 0.39]);
-  group.add(torso, shirt, neckTie, head, nose);
+  const torso = beveledBox(suit, [1.01, 1.1, 0.58], [0, 1.32, 0], 0.12);
+  const shirt = beveledBox(white, [0.38, 0.74, 0.08], [0, 0.05, 0.296], 0.025);
+  const neckTie = beveledBox(tie, [0.11, 0.55, 0.07], [0, 0.03, 0.341], 0.021);
+  const backplate = beveledBox(lapel, [0.61, 0.42, 0.08], [0, 0.13, -0.29], 0.04);
+  const head = beveledBox(blue, [0.69, 0.67, 0.63], [0, 2.18, 0], 0.16);
+  const nose = beveledBox(blue, [0.17, 0.18, 0.19], [0, 2.16, 0.34], 0.065);
+  torso.add(shirt, neckTie, backplate);
+  for (const side of [-1, 1]) {
+    const collar = beveledBox(lapel, [0.1, 0.53, 0.06], [side * 0.22, 0.25, 0.281], 0.02);
+    collar.rotation.z = side * -0.3;
+    const backLight = box(glow, [0.032, 0.25, 0.025], [side * 0.24, 0.13, -0.342]);
+    torso.add(collar, backLight);
+    group.add(beveledBox(lapel, [0.14, 0.052, 0.055], [side * 0.14, 2.27, 0.314], 0.025));
+  }
+  group.add(torso, head, nose);
 
-  const hairTop = box(hair, [0.82, 0.18, 0.66], [-0.03, 2.58, 0]);
-  hairTop.rotation.z = -0.08;
-  group.add(hairTop);
-  for (let index = 0; index < 4; index += 1) {
-    const tuft = mesh(new THREE.ConeGeometry(0.17, 0.48, 5), hair, -0.28 + index * 0.18, 2.73 + index * 0.015, 0.05 + index * 0.03);
-    tuft.rotation.z = -1.32;
-    group.add(tuft);
+  const hairShape = new THREE.SphereGeometry(1, 14, 8);
+  for (let index = 0; index < 3; index += 1) {
+    const sweep = mesh(hairShape, hair, -0.035 - index * 0.045, 2.53 + index * 0.058, -0.07 + index * 0.15);
+    sweep.scale.set(0.402 - index * 0.018, 0.13 + index * 0.019, 0.29 - index * 0.03);
+    sweep.rotation.z = -0.18;
+    group.add(sweep);
   }
 
-  const leftArm = capsuleLike(suit, 0.17, 0.62, [-0.62, 1.34, 0], 6);
-  const rightArm = capsuleLike(suit, 0.17, 0.62, [0.62, 1.34, 0], 6);
-  const leftLeg = capsuleLike(suit, 0.2, 0.64, [-0.25, 0.45, 0], 6);
-  const rightLeg = capsuleLike(suit, 0.2, 0.64, [0.25, 0.45, 0], 6);
+  const leftArm = capsuleLike(suit, 0.17, 0.62, [-0.6, 1.34, 0]);
+  const rightArm = capsuleLike(suit, 0.17, 0.62, [0.6, 1.34, 0]);
+  const leftLeg = capsuleLike(suit, 0.19, 0.60, [-0.25, 0.46, 0]);
+  const rightLeg = capsuleLike(suit, 0.19, 0.60, [0.25, 0.46, 0]);
+  for (const arm of [leftArm, rightArm]) arm.add(beveledBox(blue, [0.29, 0.21, 0.28], [0, -0.41, 0.045]));
+  for (const leg of [leftLeg, rightLeg]) leg.add(beveledBox(lapel, [0.36, 0.23, 0.51], [0, -0.31, 0.10]));
   group.add(leftArm, rightArm, leftLeg, rightLeg);
 
   const gunRoot = new THREE.Group();
   gunRoot.position.set(0.5, 1.45, 0.35);
-  const gunBody = box(gold, [0.25, 0.25, 1.05], [0, 0, 0.35]);
+  const gunBody = beveledBox(lapel, [0.31, 0.31, 0.95], [0, 0, 0.35]);
+  const gunRail = beveledBox(gold, [0.22, 0.055, 0.72], [0, 0.16, 0.35], 0.02);
   const gunCore = mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.62, 10), glow, 0, 0, 0.98);
   gunCore.rotation.x = Math.PI / 2;
-  gunRoot.add(gunBody, gunCore);
+  gunRoot.add(gunBody, gunRail, gunCore);
   group.add(gunRoot);
 
-  const halo = mesh(new THREE.TorusGeometry(0.56, 0.045, 8, 24), glow, 0, 2.92, 0);
+  const halo = mesh(new THREE.TorusGeometry(0.48, 0.026, 8, 36, Math.PI * 1.72), glow.clone(), 0, 2.94, 0);
+  halo.castShadow = false;
   halo.rotation.x = Math.PI / 2;
   group.add(halo);
 
@@ -86,17 +107,19 @@ export function createFirstPersonWeapon() {
   const group = new THREE.Group();
   const suit = material(palette.playerSuit, { roughness: 0.6, metalness: 0.42 });
   const blue = material(palette.playerBlue, { roughness: 0.5, metalness: 0.28 });
-  const gold = material(palette.gold, { emissive: true, emissiveIntensity: 0.22 });
-  const glow = material(palette.sui, { emissive: true, emissiveIntensity: 1.45 });
-  const leftHand = box(blue, [0.24, 0.24, 0.38], [-0.22, -0.16, -0.16]);
-  const rightHand = box(blue, [0.24, 0.24, 0.38], [0.22, -0.16, -0.16]);
-  const leftSleeve = box(suit, [0.3, 0.34, 0.56], [-0.3, -0.25, 0.14]);
-  const rightSleeve = box(suit, [0.3, 0.34, 0.56], [0.3, -0.25, 0.14]);
-  const body = box(gold, [0.44, 0.34, 1.15], [0, -0.02, -0.55]);
-  const barrel = mesh(new THREE.CylinderGeometry(0.11, 0.15, 0.88, 10), glow, 0, 0.04, -1.32);
+  const alloy = material(0x324258, { roughness: 0.53, metalness: 0.48, flatShading: false });
+  const inlay = material(0x255c85, { roughness: 0.58, metalness: 0.3, emissive: 0x092237, emissiveIntensity: 0.52 });
+  const glow = material(palette.sui, { emissive: true, emissiveIntensity: 0.9 });
+  const leftHand = beveledBox(blue, [0.24, 0.24, 0.38], [-0.22, -0.16, -0.16]);
+  const rightHand = beveledBox(blue, [0.24, 0.24, 0.38], [0.22, -0.16, -0.16]);
+  const leftSleeve = beveledBox(suit, [0.3, 0.34, 0.56], [-0.3, -0.25, 0.14]);
+  const rightSleeve = beveledBox(suit, [0.3, 0.34, 0.56], [0.3, -0.25, 0.14]);
+  const body = beveledBox(alloy, [0.4, 0.3, 1.1], [0, -0.02, -0.55], 0.065);
+  const sideRail = beveledBox(inlay, [0.43, 0.11, 0.75], [0, -0.04, -0.57], 0.035);
+  const barrel = mesh(new THREE.CylinderGeometry(0.05, 0.08, 0.65, 12), glow, 0, 0.04, -1.28);
   barrel.rotation.x = Math.PI / 2;
-  const sight = box(glow, [0.08, 0.12, 0.34], [0, 0.26, -0.62]);
-  group.add(leftSleeve, rightSleeve, leftHand, rightHand, body, barrel, sight);
+  const sight = beveledBox(glow, [0.035, 0.04, 0.12], [0, 0.15, -0.77], 0.012);
+  group.add(leftSleeve, rightSleeve, leftHand, rightHand, body, sideRail, barrel, sight);
   group.position.set(0.44, -0.54, -0.84);
   group.rotation.y = -0.08;
   group.scale.setScalar(0.67);
@@ -167,26 +190,30 @@ export function createRelayModel(index) {
 
 export function createBossModel() {
   const group = new THREE.Group();
-  const black = material(0x05060b, { roughness: 0.38, metalness: 0.86 });
-  const red = material(palette.danger, { emissive: true, emissiveIntensity: 2.7 });
-  const gold = material(palette.gold, { emissive: true, emissiveIntensity: 0.72 });
-  const core = mesh(new THREE.DodecahedronGeometry(1.55, 0), black, 0, 3.25, 0);
-  const eye = mesh(new THREE.SphereGeometry(0.48, 18, 12), red, 0, 3.25, 1.34);
-  const crown = mesh(new THREE.ConeGeometry(1.22, 1.4, 7), gold, 0, 5.1, 0);
+  const black = material(0x374258, { roughness: 0.44, metalness: 0.54 });
+  const red = material(palette.danger, { emissive: true, emissiveIntensity: 1.72 });
+  const gold = material(palette.gold, { emissive: true, emissiveIntensity: 0.54 });
+  const core = mesh(new THREE.IcosahedronGeometry(1.73, 1), black, 0, 3.25, 0);
+  const eye = mesh(new THREE.SphereGeometry(0.5, 20, 14), red, 0, 3.25, 1.59);
+  const crown = mesh(new THREE.CylinderGeometry(0.11, 0.42, 1.15, 10), black, 0, 5.14, 0);
   const ringA = mesh(new THREE.TorusGeometry(2.15, 0.12, 10, 36), red, 0, 3.25, 0);
   const ringB = mesh(new THREE.TorusGeometry(2.7, 0.08, 8, 40), gold, 0, 3.25, 0);
   ringA.rotation.x = Math.PI / 2;
   ringB.rotation.y = Math.PI / 2;
   group.add(core, eye, crown, ringA, ringB);
+  const cap = mesh(new THREE.TorusGeometry(0.58, 0.035, 6, 30), gold, 0, 5.38, 0);
+  cap.rotation.x = Math.PI / 2;
+  group.add(cap);
 
   for (let index = 0; index < 4; index += 1) {
     const arm = new THREE.Group();
     arm.rotation.y = index * Math.PI / 2;
     const joint = mesh(new THREE.CylinderGeometry(0.26, 0.4, 2.5, 8), black, 0, 3.25, 2.5);
     joint.rotation.x = Math.PI / 2;
-    const muzzle = mesh(new THREE.CylinderGeometry(0.35, 0.35, 0.48, 10), red, 0, 3.25, 3.8);
+    const pod = beveledBox(black, [0.78, 0.72, 1.18], [0, 3.25, 2.98], 0.14);
+    const muzzle = mesh(new THREE.CylinderGeometry(0.26, 0.33, 0.36, 12), red, 0, 3.25, 3.67);
     muzzle.rotation.x = Math.PI / 2;
-    arm.add(joint, muzzle);
+    arm.add(joint, pod, muzzle);
     group.add(arm);
   }
 
@@ -200,10 +227,63 @@ export function createPickupModel(kind) {
   const glow = material(color, { emissive: true, emissiveIntensity: 2.2 });
   const inner = material(palette.white, { emissive: color, emissiveIntensity: 0.7 });
   const outer = mesh(new THREE.TorusGeometry(0.48, 0.11, 8, 18), glow, 0, 0, 0);
-  const core = mesh(kind === "health" ? new THREE.BoxGeometry(0.38, 0.38, 0.38) : new THREE.OctahedronGeometry(0.32, 0), inner, 0, 0, 0);
+  const core = kind === "sui"
+    ? mesh(new THREE.CircleGeometry(0.41, 32), pulseChargeMaterial())
+    : mesh(kind === "health" ? new THREE.BoxGeometry(0.38, 0.38, 0.38) : new THREE.OctahedronGeometry(0.32, 0), inner);
   group.add(outer, core);
   group.userData.parts = { outer, core };
   return group;
+}
+
+function pulseChargeMaterial() {
+  if (!pulseChargeFace) {
+    const map = new THREE.TextureLoader().load(pulseChargeUrl);
+    map.colorSpace = THREE.SRGBColorSpace;
+    pulseChargeFace = new THREE.MeshBasicMaterial({ map, side: THREE.DoubleSide, toneMapped: false });
+  }
+  return pulseChargeFace;
+}
+
+export function createAquaticMascot(kind) {
+  const group = new THREE.Group();
+  const walrus = kind === "walrus";
+  const skin = material(walrus ? 0x437988 : 0x668ba4, { roughness: 0.73, metalness: 0.08, flatShading: false });
+  const muzzle = material(walrus ? 0x96b1b4 : 0xacc6d4, { roughness: 0.8, flatShading: false });
+  const ivory = material(0xe2dec5, { roughness: 0.68, flatShading: false });
+  const dark = material(0x090e19);
+  const sphere = new THREE.SphereGeometry(1, 20, 12);
+  function oval(mat, position, scale) {
+    const piece = mesh(sphere, mat, ...position);
+    piece.scale.set(...scale);
+    group.add(piece);
+    return piece;
+  }
+  oval(skin, [0, 0.57, -0.23], [walrus ? 0.74 : 0.59, 0.58, 1.06]);
+  oval(skin, [0, 0.96, 0.47], [0.48, 0.49, 0.52]);
+  oval(dark, [0, 0.96, 0.98], [0.145, 0.085, 0.08]);
+  for (const side of [-1, 1]) {
+    oval(dark, [0.245 * side, 1.14, 0.84], [0.065, 0.08, 0.055]);
+    oval(muzzle, [0.19 * side, 0.86, 0.89], [0.24, 0.17, 0.16]);
+    const flipper = oval(skin, [0.67 * side, 0.19, 0.07], [0.37, 0.15, 0.58]);
+    flipper.rotation.y = side * 0.53;
+    const tail = oval(skin, [0.22 * side, 0.23, -1.13], [0.2, 0.125, 0.46]);
+    tail.rotation.y = -side * 0.54;
+    if (walrus) {
+      const tusk = mesh(new THREE.ConeGeometry(0.082, 0.49, 10), ivory, 0.21 * side, 0.64, 0.98);
+      tusk.rotation.set(Math.PI - 0.18, 0, side * 0.16);
+      group.add(tusk);
+    }
+  }
+  return group;
+}
+
+export function createWaterDrop() {
+  const profile = [[0, -0.24], [0.13, -0.22], [0.22, -0.12], [0.23, 0.005], [0.17, 0.14], [0.08, 0.25], [0, 0.42]]
+    .map(([radius, height]) => new THREE.Vector2(radius, height));
+  return new THREE.Mesh(
+    new THREE.LatheGeometry(profile, 16),
+    material(0x3ebeff, { emissive: 0x168dff, emissiveIntensity: 1.4, roughness: 0.25, flatShading: false }),
+  );
 }
 
 export function setShadowRecursive(root, enabled = true) {

@@ -27,11 +27,10 @@ await page.keyboard.press("Space");
 await page.evaluate(() => window.advanceTime(100));
 check("start flow", (await state()).phase === "playing", await state());
 
-await page.keyboard.press("KeyV");
-await page.evaluate(() => window.advanceTime(100));
-check("first-person toggle", (await state()).cameraMode === "first", await state());
+check("first-person default", (await state()).cameraMode === "first", await state());
 await page.screenshot({ path: path.join(outputRoot, "first-person.png"), fullPage: true });
 await page.keyboard.press("KeyV");
+check("third-person toggle", (await state()).cameraMode === "third", await state());
 
 await page.keyboard.press("ShiftLeft");
 await page.evaluate(() => window.advanceTime(80));

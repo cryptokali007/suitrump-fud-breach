@@ -2,6 +2,19 @@ export const TAU = Math.PI * 2;
 export const STEP = 1 / 60;
 export const WORLD_HALF_X = 30;
 export const WORLD_HALF_Z = 38;
+export const CHAIN_WINDOW = 4;
+
+export const WEAPONS = {
+  repeater: { label: "REPEATER", damage: 1, interval: 0.145, recoil: 0.18, color: 0x9ceaff },
+  riptide: { label: "RIPTIDE", damage: 3, interval: 0.46, recoil: 0.34, color: 0x39bfff },
+  rickroll: { label: "RICKROLL", damage: 0, interval: 0.42, recoil: 0.15, color: 0xe18bff },
+};
+export const WEAPON_SLOTS = ["repeater", "riptide", "rickroll"];
+export const RICKROLL_COOLDOWN = 10;
+
+export function chainMultiplier(count) {
+  return 1 + Math.min(4, Math.max(0, count - 1)) * 0.25;
+}
 
 export const palette = {
   void: 0x03050c,
@@ -41,7 +54,7 @@ export const ENEMY_TYPES = {
   },
   farmer: {
     id: "farmer",
-    label: "ENGAGEMENT FARMER",
+    label: "RUG RUNNER",
     color: palette.orange,
     accent: palette.gold,
     health: 5,
@@ -67,7 +80,7 @@ export const ENEMY_TYPES = {
   },
   bot: {
     id: "bot",
-    label: "NGMI BOT",
+    label: "SCAM BOT",
     color: palette.green,
     accent: palette.sui,
     health: 3,

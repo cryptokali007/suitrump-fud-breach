@@ -72,6 +72,17 @@ export class AudioDirector {
     this.noise(0.07, 0.08, 1200);
   }
 
+  riptide() {
+    this.tone(470, 0.22, { endFrequency: 98, volume: 0.23, type: "sine" });
+    this.noise(0.16, 0.08, 880);
+  }
+
+  rickroll() {
+    [329, 494, 440, 587].forEach((frequency, beat) => {
+      window.setTimeout(() => this.tone(frequency, 0.14, { volume: 0.17, type: "triangle" }), beat * 96);
+    });
+  }
+
   pulse() {
     this.tone(120, 0.38, { endFrequency: 720, volume: 0.22, type: "sawtooth" });
     this.tone(62, 0.42, { endFrequency: 38, volume: 0.18, type: "sine" });

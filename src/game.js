@@ -4,15 +4,21 @@ import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { AudioDirector } from "./audio.js";
+import { addBackdrop, createArenaFloor, createCover, createNightSky } from "./arena-art.js";
 import {
+  CHAIN_WINDOW,
   ENEMY_TYPES,
   INNER_SPAWNS,
   OUTER_SPAWNS,
+  RICKROLL_COOLDOWN,
   STAGE_COPY,
   STEP,
   TAU,
+  WEAPONS,
+  WEAPON_SLOTS,
   WORLD_HALF_X,
   WORLD_HALF_Z,
+  chainMultiplier,
   clamp,
   distance2,
   forwardOf,
@@ -23,12 +29,14 @@ import {
   palette,
 } from "./config.js";
 import {
+  createAquaticMascot,
   createBossModel,
   createEnemyModel,
   createFirstPersonWeapon,
   createPickupModel,
   createPlayerModel,
   createRelayModel,
+  createWaterDrop,
   material,
   setShadowRecursive,
 } from "./models.js";
@@ -36,10 +44,16 @@ import {
 const shell = document.getElementById("game-shell");
 const canvas = document.getElementById("game-canvas");
 const hud = document.getElementById("hud-canvas");
+const missionAction = document.getElementById("mission-action");
+const weaponButton = document.getElementById("weapon-button");
 const ui = hud.getContext("2d");
 const audio = new AudioDirector();
 const query = new URLSearchParams(window.location.search);
 const QA_MODE = query.get("qa") === "1";
+const TEST_MODE = QA_MODE || query.get("test") === "1";
+const BEST_SCORE_KEY = "fud-breach-best-score";
+const QUALITY_KEY = "fud-breach-quality";
+const QUALITY_LEVELS = ["high", "medium", "low"];
 
 const renderer = new THREE.WebGLRenderer({
   canvas,
@@ -50,13 +64,13 @@ const renderer = new THREE.WebGLRenderer({
 });
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.22;
+renderer.toneMappingExposure = 1.26;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(palette.sky);
-scene.fog = new THREE.FogExp2(palette.fog, 0.0125);
+scene.background = createNightSky();
+scene.fog = new THREE.FogExp2(0x283950, 0.0105);
 
 const camera = new THREE.PerspectiveCamera(62, 16 / 9, 0.08, 160);
 const composer = new EffectComposer(renderer);
@@ -76,6 +90,8 @@ scene.add(worldRoot, dynamicRoot);
 const obstacles = [];
 const staticLabels = [];
 const relays = [];
+const cancelTouchPads = [];
+const friendlyCreatures = [];
 let gate = null;
 let extraction = null;
 let boss = null;
@@ -92,10 +108,17 @@ const state = {
   stageTime: 0,
   stageBanner: 0,
   score: 0,
+  bestScore: TEST_MODE ? 0 : readBestScore(),
+  newBest: false,
+  chain: 0,
+  chainUntil: 0,
+  peakChain: 0,
   kills: 0,
   shots: 0,
   hits: 0,
-  cameraMode: "third",
+  cameraMode: "first",
+  weapon: "repeater",
+  rickrollTimer: 0,
   objective: "Click or press Space to begin the breach.",
   message: "",
   messageTimer: 0,
@@ -104,7 +127,7 @@ const state = {
   cameraShake: 0,
   triggerHeld: false,
   mouseLocked: false,
-  quality: QA_MODE ? "low" : query.get("quality") || localStorage.getItem("fud-breach-quality") || "high",
+  quality: QA_MODE ? "low" : readQuality(),
   keys: new Set(),
   touch: { moveX: 0, moveY: 0, aimX: 0, aimY: 0, aiming: false },
   player: {
@@ -118,6 +141,7 @@ const state = {
     maxArmor: 50,
     speed: 8.1,
     shotCooldown: 0,
+    rickrollCooldown: 0,
     pulseCooldown: 0,
     dashCooldown: 0,
     dashTime: 0,
@@ -143,6 +167,7 @@ dynamicRoot.add(playerModel);
 const firstPersonWeapon = createFirstPersonWeapon();
 camera.add(firstPersonWeapon);
 scene.add(camera);
+const waterDrop = createWaterDrop();
 
 buildLighting();
 buildWorld();
@@ -152,10 +177,10 @@ resetGame(false);
 requestAnimationFrame(frame);
 
 function buildLighting() {
-  const hemi = new THREE.HemisphereLight(0x8bd9ff, 0x070814, 1.55);
+  const hemi = new THREE.HemisphereLight(0xc9e8ff, 0x435272, 2.1);
   scene.add(hemi);
 
-  const moon = new THREE.DirectionalLight(0xb8ddff, 2.55);
+  const moon = new THREE.DirectionalLight(0xbcd9ff, 2.25);
   moon.position.set(-18, 28, 16);
   moon.castShadow = true;
   moon.shadow.mapSize.set(2048, 2048);
@@ -165,40 +190,43 @@ function buildLighting() {
   moon.shadow.camera.bottom = -48;
   moon.shadow.camera.near = 1;
   moon.shadow.camera.far = 100;
+  moon.shadow.normalBias = 0.04;
   scene.add(moon);
 
-  const blueRim = new THREE.PointLight(palette.sui, 48, 48, 1.8);
+  const blueRim = new THREE.PointLight(palette.sui, 135, 48, 1.7);
   blueRim.position.set(-20, 8, 8);
   scene.add(blueRim);
 
-  const redRim = new THREE.PointLight(palette.danger, 36, 42, 1.8);
+  const redRim = new THREE.PointLight(0xff7a53, 100, 42, 1.7);
   redRim.position.set(20, 7, -20);
   scene.add(redRim);
 }
 
 function buildWorld() {
-  const floorMat = material(palette.floor, { roughness: 0.84, metalness: 0.58, flatShading: false });
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(WORLD_HALF_X * 2, WORLD_HALF_Z * 2), floorMat);
-  floor.rotation.x = -Math.PI / 2;
-  floor.receiveShadow = true;
-  worldRoot.add(floor);
-
-  const grid = new THREE.GridHelper(WORLD_HALF_X * 2, 30, palette.sui, 0x123557);
-  grid.position.y = 0.025;
-  grid.material.transparent = true;
-  grid.material.opacity = 0.2;
-  worldRoot.add(grid);
+  worldRoot.add(createArenaFloor(renderer.capabilities.getMaxAnisotropy()));
 
   addLaneGlow(-11);
   addLaneGlow(0);
   addLaneGlow(11);
   addBoundaryWalls();
   addArchitecture();
-  addSkyline();
+  addFriendlyCreatures();
+  addBackdrop(worldRoot);
   addAtmosphere();
   addRelays();
   addGate();
   addExtractionPad();
+}
+
+function addFriendlyCreatures() {
+  for (const [kind, x, angle] of [["walrus", -10, 0.4], ["seal", 10, -0.4]]) {
+    const creature = createAquaticMascot(kind);
+    creature.position.set(x, 3.96, 9.5);
+    creature.rotation.y = angle;
+    creature.scale.setScalar(1.26);
+    friendlyCreatures.push(creature);
+    worldRoot.add(creature);
+  }
 }
 
 function addLaneGlow(x) {
@@ -216,64 +244,50 @@ function addLaneGlow(x) {
 }
 
 function addBoundaryWalls() {
-  const blue = material(0x102e50, { roughness: 0.65, metalness: 0.58 });
-  const gold = material(0x5d4614, { roughness: 0.6, metalness: 0.72, emissive: palette.gold, emissiveIntensity: 0.08 });
-  const red = material(0x501328, { roughness: 0.62, metalness: 0.62, emissive: palette.danger, emissiveIntensity: 0.08 });
-  addBlock(0, -WORLD_HALF_Z - 0.55, WORLD_HALF_X * 2 + 1.2, 4.8, 1.1, blue, null, false);
-  addBlock(0, WORLD_HALF_Z + 0.55, WORLD_HALF_X * 2 + 1.2, 4.8, 1.1, blue, null, false);
-  addBlock(-WORLD_HALF_X - 0.55, 0, 1.1, 4.8, WORLD_HALF_Z * 2 + 1.2, gold, null, false);
-  addBlock(WORLD_HALF_X + 0.55, 0, 1.1, 4.8, WORLD_HALF_Z * 2 + 1.2, red, null, false);
+  const barrier = material(0x35445a, { roughness: 0.7, metalness: 0.3, flatShading: false });
+  const strips = new THREE.InstancedMesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshBasicMaterial({ color: 0x479fc7 }),
+    4,
+  );
+  const marker = new THREE.Object3D();
+  const longSide = WORLD_HALF_X * 2 + 1.2;
+  const shortSide = WORLD_HALF_Z * 2 + 1.2;
+  const sides = [
+    [0, -WORLD_HALF_Z - 0.55, longSide, 1.1],
+    [0, WORLD_HALF_Z + 0.55, longSide, 1.1],
+    [-WORLD_HALF_X - 0.55, 0, 1.1, shortSide],
+    [WORLD_HALF_X + 0.55, 0, 1.1, shortSide],
+  ];
+  sides.forEach(([x, z, width, depth], index) => {
+    addBlock(x, z, width, 2.15, depth, barrier, null, false);
+    marker.position.set(x, 2.17, z);
+    marker.scale.set(width - 0.12, 0.05, depth - 0.15);
+    marker.updateMatrix();
+    strips.setMatrixAt(index, marker.matrix);
+  });
+  worldRoot.add(strips);
 }
 
 function addArchitecture() {
-  const dark = material(0x0a1527, { roughness: 0.76, metalness: 0.68 });
-  const darkAlt = material(0x111e32, { roughness: 0.74, metalness: 0.62 });
-  const blue = material(0x0e3a66, { roughness: 0.58, metalness: 0.64, emissive: 0x0d335d, emissiveIntensity: 0.16 });
+  const dark = material(0x35465b, { roughness: 0.76, metalness: 0.25, flatShading: false });
+  const darkAlt = material(0x40394a, { roughness: 0.7, metalness: 0.26, flatShading: false });
+  const blue = material(0x26547a, { roughness: 0.58, metalness: 0.34, flatShading: false });
 
-  addBlock(-18, 21, 6.2, 2.7, 5.5, dark, "LIQUIDITY");
-  addBlock(18, 21, 6.2, 2.7, 5.5, dark, "SLIPPAGE");
-  addBlock(-10, 9, 5.8, 3.9, 7.6, darkAlt, "PAPER WALL");
-  addBlock(10, 9, 5.8, 3.9, 7.6, darkAlt, "BOT FARM");
-  addBlock(-20, -3, 5.2, 2.3, 7.4, blue, "DEX NODE");
-  addBlock(20, -3, 5.2, 2.3, 7.4, blue, "MEME NODE");
+  addBlock(-18, 21, 6.2, 2.7, 5.5, dark, "INTERCEPT");
+  addBlock(18, 21, 6.2, 2.7, 5.5, dark, "POWER STACK");
+  addBlock(-10, 9, 5.8, 3.9, 7.6, darkAlt, "SCREEN BAY");
+  addBlock(10, 9, 5.8, 3.9, 7.6, darkAlt, "BOT FACTORY");
+  addBlock(-20, -3, 5.2, 2.3, 7.4, blue, "UPLINK");
+  addBlock(20, -3, 5.2, 2.3, 7.4, blue, "MONITOR ROW");
   addBlock(-8.5, -16.5, 5.6, 3.3, 5.6, dark, "SIGNAL A");
   addBlock(8.5, -16.5, 5.6, 3.3, 5.6, dark, "SIGNAL B");
   addBlock(-18, -30, 5.4, 2.5, 4.4, darkAlt, null);
   addBlock(18, -30, 5.4, 2.5, 4.4, darkAlt, null);
 
-  const bridgeMat = material(0x142942, { roughness: 0.7, metalness: 0.64 });
+  const bridgeMat = material(0x44586f, { roughness: 0.67, metalness: 0.28, flatShading: false });
   addBlock(-18, -7.5, 23, 3.1, 1.1, bridgeMat, null, true);
   addBlock(18, -7.5, 23, 3.1, 1.1, bridgeMat, null, true);
-}
-
-function addSkyline() {
-  const towerMat = material(0x060a13, { roughness: 0.72, metalness: 0.74 });
-  const windowBlue = material(palette.sui, { emissive: true, emissiveIntensity: 1.05 });
-  const windowRed = material(palette.danger, { emissive: true, emissiveIntensity: 0.85 });
-  for (let index = 0; index < 28; index += 1) {
-    const side = index % 2 === 0 ? -1 : 1;
-    const x = side * random(36, 54);
-    const z = random(-58, 55);
-    const height = random(8, 25);
-    const width = random(3.5, 8);
-    const tower = new THREE.Mesh(new THREE.BoxGeometry(width, height, width), towerMat);
-    tower.position.set(x, height / 2 - 1, z);
-    worldRoot.add(tower);
-    const strip = new THREE.Mesh(new THREE.BoxGeometry(0.12, height * 0.7, width * 0.58), index % 3 === 0 ? windowRed : windowBlue);
-    strip.position.set(x - side * (width / 2 + 0.07), height / 2, z);
-    worldRoot.add(strip);
-  }
-
-  const moonMat = new THREE.MeshBasicMaterial({ color: 0x7fc8ff, fog: false });
-  const moon = new THREE.Mesh(new THREE.SphereGeometry(7.5, 28, 18), moonMat);
-  moon.position.set(-34, 30, -92);
-  worldRoot.add(moon);
-  const halo = new THREE.Mesh(
-    new THREE.RingGeometry(8.4, 12.5, 48),
-    new THREE.MeshBasicMaterial({ color: palette.sui, transparent: true, opacity: 0.09, side: THREE.DoubleSide, fog: false })
-  );
-  halo.position.copy(moon.position);
-  worldRoot.add(halo);
 }
 
 function addAtmosphere() {
@@ -360,44 +374,39 @@ function addExtractionPad() {
 }
 
 function addBlock(x, z, sx, sy, sz, mat, label, collide = true) {
-  const block = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), mat);
-  block.position.set(x, sy / 2, z);
-  block.castShadow = true;
-  block.receiveShadow = true;
-  worldRoot.add(block);
-
-  const cap = new THREE.Mesh(
-    new THREE.BoxGeometry(Math.max(0.2, sx - 0.35), 0.12, Math.max(0.2, sz - 0.35)),
-    material(palette.gold, { emissive: true, emissiveIntensity: 0.24 })
-  );
-  cap.position.set(x, sy + 0.08, z);
-  worldRoot.add(cap);
+  worldRoot.add(createCover(x, z, sx, sy, sz, mat, label));
   if (collide) obstacles.push({ x, z, sx, sz, label });
-  if (label) staticLabels.push({ text: label, x, y: sy + 0.55, z, color: "#ffd45f", size: 11, alpha: 0.72 });
 }
 
 function resetGame(startPlaying = false) {
   clearDynamicEntities();
-  state.phase = startPlaying ? "playing" : "ready";
+  setPhase(startPlaying ? "playing" : "ready");
   state.stage = "breach";
   state.time = 0;
   state.visualTime = 0;
   state.stageTime = 0;
   state.stageBanner = startPlaying ? 2.6 : 0;
   state.score = 0;
+  state.newBest = false;
+  state.chain = 0;
+  state.chainUntil = 0;
+  state.peakChain = 0;
+  state.rickrollTimer = 0;
+  selectWeapon("repeater");
   state.kills = 0;
   state.shots = 0;
   state.hits = 0;
   state.hitFlash = 0;
   state.hitMarker = 0;
   state.cameraShake = 0;
-  state.triggerHeld = false;
+  clearInput();
   state.player.x = 0;
   state.player.z = 29;
   state.player.yaw = Math.PI;
   state.player.health = state.player.maxHealth;
   state.player.armor = state.player.maxArmor;
   state.player.shotCooldown = 0;
+  state.player.rickrollCooldown = 0;
   state.player.pulseCooldown = 0;
   state.player.dashCooldown = 0;
   state.player.dashTime = 0;
@@ -430,7 +439,7 @@ function clearDynamicEntities() {
     for (const item of collection) {
       if (item.group) dynamicRoot.remove(item.group);
       if (item.mesh) dynamicRoot.remove(item.mesh);
-      if (item.line) dynamicRoot.remove(item.line);
+      if (item.line) disposeTracer(item);
     }
     collection.length = 0;
   }
@@ -440,7 +449,43 @@ function beginGame() {
   if (state.phase === "playing") return;
   audio.unlock();
   resetGame(true);
+  canvas.focus();
   requestMouseLook();
+}
+
+function setPhase(phase) {
+  state.phase = phase;
+  shell.dataset.phase = phase;
+  missionAction.hidden = phase === "playing";
+  if (phase === "ready") missionAction.textContent = "Deploy";
+  if (phase === "paused") missionAction.textContent = "Resume";
+  if (phase === "gameover" || phase === "victory") missionAction.textContent = "Play again";
+}
+
+function clearInput() {
+  state.keys.clear();
+  state.triggerHeld = false;
+  cancelTouchPads.forEach((cancel) => cancel());
+}
+
+function pauseGame() {
+  if (state.phase !== "playing") return;
+  clearInput();
+  setPhase("paused");
+  releaseMouseLook();
+}
+
+function resumeGame() {
+  if (state.phase !== "paused") return;
+  clearInput();
+  setPhase("playing");
+  canvas.focus();
+  requestMouseLook();
+}
+
+function activateMissionAction() {
+  if (state.phase === "paused") resumeGame();
+  else beginGame();
 }
 
 function spawnBreachEncounter() {
@@ -453,10 +498,11 @@ function spawnRelayEncounter() {
   kinds.forEach((kind, index) => spawnEnemy(kind, INNER_SPAWNS[index], `relay-${index}`));
 }
 
-function spawnEnemy(kind, point, id = `${kind.id}-${Math.random().toString(36).slice(2)}`) {
+function spawnEnemy(kind, point, id = `${kind.id}-${Math.random().toString(36).slice(2)}`, reinforcement = false) {
   const group = createEnemyModel(kind);
   const enemy = {
     id,
+    reinforcement,
     kind,
     group,
     x: point[0] + random(-0.6, 0.6),
@@ -576,9 +622,16 @@ function updateMission(dt) {
 
 function completeMission() {
   if (state.phase !== "playing") return;
-  state.phase = "victory";
-  state.objective = "Breach complete.";
   state.score += Math.max(0, Math.round(9000 - state.time * 42));
+  if (!TEST_MODE) state.bestScore = Math.max(state.bestScore, readBestScore());
+  state.newBest = state.score > state.bestScore;
+  if (state.newBest) {
+    state.bestScore = state.score;
+    if (!TEST_MODE) writeSetting(BEST_SCORE_KEY, String(state.bestScore));
+  }
+  setPhase("victory");
+  state.objective = "Breach complete.";
+  clearInput();
   releaseMouseLook();
   audio.victory();
   addShockwave(extraction.x, extraction.z, palette.gold, 22);
@@ -586,40 +639,46 @@ function completeMission() {
 }
 
 function setupInput() {
+  missionAction.addEventListener("click", activateMissionAction);
+  document.getElementById("pause-button").addEventListener("click", pauseGame);
+  weaponButton.addEventListener("click", () => {
+    selectWeapon(WEAPON_SLOTS[(WEAPON_SLOTS.indexOf(state.weapon) + 1) % WEAPON_SLOTS.length]);
+  });
   window.addEventListener("keydown", (event) => {
     const key = normalizeKey(event);
+    if ((key === "space" || key === "enter") && event.target instanceof HTMLButtonElement) return;
     if (shouldBlockKey(key)) event.preventDefault();
     const wasHeld = state.keys.has(key);
     state.keys.add(key);
 
-    if (key === "escape" && isMouseLookLocked()) {
-      releaseMouseLook();
-      return;
-    }
     if (key === "escape" && document.fullscreenElement) {
       document.exitFullscreen?.();
+      pauseGame();
       return;
     }
+    if (key === "escape" && !event.repeat) pauseGame();
+    if (event.repeat && ["f", "v", "u", "p", "r", "enter"].includes(key)) return;
     if (key === "f") toggleFullscreen();
     if (key === "v") toggleCameraMode();
+    const slot = WEAPON_SLOTS[Number(key) - 1];
+    if (slot && !wasHeld) selectWeapon(slot);
     if (key === "u") setMessage(audio.toggle() ? "AUDIO ONLINE" : "AUDIO MUTED", 1.4);
     if (key === "g" && !wasHeld) cycleQuality();
     if ((key === "shift" || key === "q") && !wasHeld) dash();
     if (key === "e" && !wasHeld) pulse();
 
     if (key === "p" && state.phase === "playing") {
-      state.phase = "paused";
-      releaseMouseLook();
+      pauseGame();
     } else if (key === "p" && state.phase === "paused") {
-      state.phase = "playing";
+      resumeGame();
     }
 
     if (key === "r") {
       resetGame(state.phase !== "ready");
       return;
     }
-    if ((key === "space" || key === "enter") && !["playing", "paused"].includes(state.phase)) {
-      beginGame();
+    if ((key === "space" || key === "enter") && state.phase !== "playing") {
+      if (!event.repeat) activateMissionAction();
       return;
     }
     if (key === "space") state.triggerHeld = true;
@@ -639,7 +698,10 @@ function setupInput() {
     }
     if (event.button !== 0) return;
     canvas.focus();
-    if (state.phase !== "playing") beginGame();
+    if (state.phase !== "playing") {
+      activateMissionAction();
+      return;
+    }
     audio.unlock();
     requestMouseLook();
     state.triggerHeld = true;
@@ -654,21 +716,18 @@ function setupInput() {
     state.player.yaw = wrapAngle(state.player.yaw - event.movementX * 0.00215);
   });
   document.addEventListener("pointerlockchange", () => {
+    const wasLocked = state.mouseLocked;
     state.mouseLocked = isMouseLookLocked();
+    if (wasLocked && !state.mouseLocked) pauseGame();
   });
   document.addEventListener("pointerlockerror", () => {
     state.mouseLocked = false;
   });
-  window.addEventListener("blur", () => {
-    state.keys.clear();
-    state.triggerHeld = false;
-    if (state.phase === "playing") state.phase = "paused";
-    releaseMouseLook();
-  });
+  window.addEventListener("blur", pauseGame);
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden") releaseMouseLook();
+    if (document.visibilityState === "hidden") pauseGame();
   });
-  window.addEventListener("pagehide", releaseMouseLook);
+  window.addEventListener("pagehide", pauseGame);
   window.addEventListener("resize", render);
   setupTouchControls();
 }
@@ -689,12 +748,14 @@ function setupTouchControls() {
   const pulseButton = document.getElementById("pulse-button");
   dashButton.addEventListener("pointerdown", (event) => {
     event.preventDefault();
+    if (state.phase === "paused") return;
     audio.unlock();
     if (state.phase !== "playing") beginGame();
     dash();
   });
   pulseButton.addEventListener("pointerdown", (event) => {
     event.preventDefault();
+    if (state.phase === "paused") return;
     audio.unlock();
     if (state.phase !== "playing") beginGame();
     pulse();
@@ -704,8 +765,17 @@ function setupTouchControls() {
 function setupTouchPad(element, onChange) {
   let pointerId = null;
   let lastX = 0;
+  function cancel() {
+    const capturedPointer = pointerId;
+    pointerId = null;
+    if (capturedPointer !== null && element.hasPointerCapture(capturedPointer)) element.releasePointerCapture(capturedPointer);
+    element.style.setProperty("--stick-x", "0px");
+    element.style.setProperty("--stick-y", "0px");
+    onChange(0, 0, false, 0);
+  }
+  cancelTouchPads.push(cancel);
   element.addEventListener("pointerdown", (event) => {
-    if (pointerId !== null) return;
+    if (pointerId !== null || state.phase === "paused") return;
     event.preventDefault();
     audio.unlock();
     if (state.phase !== "playing") beginGame();
@@ -715,21 +785,18 @@ function setupTouchPad(element, onChange) {
     updateTouchPad(element, event, onChange, true, 0);
   });
   element.addEventListener("pointermove", (event) => {
-    if (event.pointerId !== pointerId) return;
+    if (event.pointerId !== pointerId || state.phase !== "playing") return;
     event.preventDefault();
     const deltaX = event.clientX - lastX;
     lastX = event.clientX;
     updateTouchPad(element, event, onChange, true, deltaX);
   });
   const end = (event) => {
-    if (event.pointerId !== pointerId) return;
-    pointerId = null;
-    element.style.setProperty("--stick-x", "0px");
-    element.style.setProperty("--stick-y", "0px");
-    onChange(0, 0, false, 0);
+    if (event.pointerId === pointerId) cancel();
   };
   element.addEventListener("pointerup", end);
   element.addEventListener("pointercancel", end);
+  element.addEventListener("lostpointercapture", end);
 }
 
 function updateTouchPad(element, event, onChange, active, deltaX) {
@@ -758,7 +825,7 @@ function normalizeKey(event) {
 }
 
 function shouldBlockKey(key) {
-  return ["space", "w", "a", "s", "d", "arrowleft", "arrowright", "arrowup", "arrowdown", "shift", "q", "e", "f", "p", "r", "v", "g", "u", "enter"].includes(key);
+  return ["space", "w", "a", "s", "d", "arrowleft", "arrowright", "arrowup", "arrowdown", "shift", "q", "e", "f", "p", "r", "v", "g", "u", "enter", "1", "2", "3"].includes(key);
 }
 
 function isMouseLookLocked() {
@@ -790,16 +857,53 @@ function toggleCameraMode() {
   setMessage(state.cameraMode === "third" ? "CHASE CAMERA" : "FIRST-PERSON AIM", 1.4);
 }
 
+function selectWeapon(id) {
+  state.weapon = id;
+  const weapon = WEAPONS[id];
+  weaponButton.textContent = weapon.label;
+  const parts = firstPersonWeapon.userData.parts;
+  parts.barrel.material.color.setHex(weapon.color);
+  parts.barrel.material.emissive.setHex(weapon.color);
+  parts.barrel.scale.y = id === "riptide" ? 1.28 : id === "rickroll" ? 0.7 : 1;
+}
+
 function cycleQuality() {
-  const levels = ["high", "medium", "low"];
-  const next = levels[(levels.indexOf(state.quality) + 1) % levels.length];
+  const next = QUALITY_LEVELS[(QUALITY_LEVELS.indexOf(state.quality) + 1) % QUALITY_LEVELS.length];
   applyQuality(next);
+  if (!TEST_MODE) writeSetting(QUALITY_KEY, next);
   setMessage(`GRAPHICS: ${next.toUpperCase()}`, 1.4);
+}
+
+function readSetting(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeSetting(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // The current run still works when browser storage is disabled.
+  }
+}
+
+function readBestScore() {
+  const score = Number(readSetting(BEST_SCORE_KEY));
+  return Number.isSafeInteger(score) && score > 0 ? score : 0;
+}
+
+function readQuality() {
+  const requested = query.get("quality");
+  if (QUALITY_LEVELS.includes(requested)) return requested;
+  const saved = readSetting(QUALITY_KEY);
+  return QUALITY_LEVELS.includes(saved) ? saved : "medium";
 }
 
 function applyQuality(level) {
   state.quality = level;
-  localStorage.setItem("fud-breach-quality", level);
   renderer.shadowMap.enabled = level !== "low";
   bloomPass.strength = level === "high" ? 0.46 : level === "medium" ? 0.34 : 0.18;
   renderedWidth = 0;
@@ -833,24 +937,31 @@ function pulse() {
   }
   for (const shot of state.enemyShots) dynamicRoot.remove(shot.mesh);
   state.enemyShots.length = 0;
-  setMessage("SUI PULSE", 1.1);
+  setMessage("PULSE", 1.1);
 }
 
 function shoot() {
   if (state.phase !== "playing" || state.player.shotCooldown > 0) return;
+  const weapon = WEAPONS[state.weapon];
+  const water = state.weapon === "riptide";
+  const broadcast = state.weapon === "rickroll";
+  if (broadcast && state.player.rickrollCooldown > 0) return;
   const forward = forwardOf(state.player.yaw);
   const right = rightOf(state.player.yaw);
+  const sideOffset = state.cameraMode === "first" ? 0 : 0.42;
   const origin = new THREE.Vector3(
-    state.player.x + forward.x * 0.9 + right.x * 0.42,
+    state.player.x + forward.x * 0.9 + right.x * sideOffset,
     state.cameraMode === "first" ? 1.7 : 1.48,
-    state.player.z + forward.z * 0.9 + right.z * 0.42
+    state.player.z + forward.z * 0.9 + right.z * sideOffset
   );
   const direction = new THREE.Vector3(forward.x, 0, forward.z).normalize();
   applyAimAssist(origin, direction);
-  state.player.shotCooldown = 0.145;
-  state.player.recoil = 0.18;
+  state.player.shotCooldown = weapon.interval;
+  state.player.recoil = weapon.recoil;
+  if (broadcast) state.player.rickrollCooldown = RICKROLL_COOLDOWN;
   state.shots += 1;
-  audio.shoot();
+  if (water) audio.riptide();
+  else audio.shoot();
 
   let maxDistance = 42;
   for (const box of obstacles) {
@@ -883,19 +994,36 @@ function shoot() {
   }
 
   const end = tmpA.copy(origin).addScaledVector(direction, targetDistance);
-  addTracer(origin, end, target ? palette.gold : palette.sui);
-  muzzleBurst(origin, direction);
+  addTracer(origin, end, weapon.color, water);
+  muzzleBurst(origin, direction, weapon.color);
+  if (broadcast) {
+    if (targetType === "enemy" && (target.kind.id === "bot" || target.kind.id === "farmer")) {
+      state.hits += 1;
+      state.rickrollTimer = 1.25;
+      killEnemy(target);
+      addShockwave(target.x, target.z, weapon.color, 4.8);
+      audio.rickroll();
+    } else {
+      setMessage("RICKROLL  /  SCAM BOTS & RUG RUNNERS", 1.3);
+    }
+    return;
+  }
   if (target) {
     state.hits += 1;
     state.hitMarker = 0.14;
-    damageTarget(target, 1, targetType);
+    damageTarget(target, weapon.damage, targetType);
+  }
+  if (water) {
+    for (const enemy of [...state.enemies]) {
+      if (enemy === target || distance2(end.x, end.z, enemy.x, enemy.z) > 2.25 ** 2) continue;
+      if (hasLineOfSight(end.x, end.z, enemy.x, enemy.z)) damageTarget(enemy, 1, "enemy");
+    }
   }
 }
 
 function applyAimAssist(origin, direction) {
-  if (state.cameraMode === "first" && state.mouseLocked) return;
   let best = null;
-  let bestScore = 0.12;
+  let bestScore = state.cameraMode === "first" && state.mouseLocked ? 0.994 : 0.94;
   const candidates = [...state.enemies, ...relays.filter((relay) => relay.active), ...(boss ? [boss] : [])];
   for (const target of candidates) {
     const toTarget = tmpB.set(target.x - origin.x, 0, target.z - origin.z);
@@ -903,7 +1031,7 @@ function applyAimAssist(origin, direction) {
     if (distance > 32 || distance < 0.5 || !hasLineOfSight(origin.x, origin.z, target.x, target.z)) continue;
     toTarget.normalize();
     const alignment = direction.dot(toTarget);
-    if (alignment > 0.94 && alignment > bestScore) {
+    if (alignment > bestScore) {
       best = toTarget.clone();
       bestScore = alignment;
     }
@@ -928,7 +1056,12 @@ function killEnemy(enemy) {
   const index = state.enemies.indexOf(enemy);
   if (index !== -1) state.enemies.splice(index, 1);
   dynamicRoot.remove(enemy.group);
-  state.score += enemy.kind.score;
+  if (!enemy.reinforcement) {
+    state.chain = state.time < state.chainUntil ? state.chain + 1 : 1;
+    state.chainUntil = state.time + CHAIN_WINDOW;
+    state.peakChain = Math.max(state.peakChain, state.chain);
+    state.score += Math.round(enemy.kind.score * chainMultiplier(state.chain));
+  }
   state.kills += 1;
   audio.kill();
   burstParticles(enemy.x, enemy.kind.ai === "drone" ? 1.6 : 1.15, enemy.z, enemy.kind.color, 28, 0.62, 6);
@@ -936,7 +1069,7 @@ function killEnemy(enemy) {
   const dropRoll = Math.random();
   if (state.player.health < 55 && dropRoll < 0.45) createPickup("health", enemy.x, enemy.z);
   else if (state.player.armor < 25 && dropRoll < 0.6) createPickup("armor", enemy.x, enemy.z);
-  else if (dropRoll < 0.72) createPickup("sui", enemy.x, enemy.z);
+  else if (dropRoll < 0.72) createPickup("sui", enemy.x, enemy.z, enemy.reinforcement ? 0 : 260);
 }
 
 function destroyRelay(relay) {
@@ -962,11 +1095,11 @@ function destroyBoss() {
   audio.kill();
 }
 
-function createPickup(kind, x, z) {
+function createPickup(kind, x, z, points = 0) {
   const group = createPickupModel(kind);
   group.position.set(x, 1.05, z);
   dynamicRoot.add(group);
-  state.pickups.push({ kind, group, x, z, radius: 0.8, life: 18, phase: random(0, TAU) });
+  state.pickups.push({ kind, group, x, z, points, radius: 0.8, life: 18, phase: random(0, TAU) });
 }
 
 function fireEnemyShot(enemy, options = {}) {
@@ -1044,6 +1177,8 @@ function update(dt) {
   state.time += dt;
   state.stageBanner = Math.max(0, state.stageBanner - dt);
   state.player.shotCooldown = Math.max(0, state.player.shotCooldown - dt);
+  state.player.rickrollCooldown = Math.max(0, state.player.rickrollCooldown - dt);
+  state.rickrollTimer = Math.max(0, state.rickrollTimer - dt);
   state.player.pulseCooldown = Math.max(0, state.player.pulseCooldown - dt);
   state.player.dashCooldown = Math.max(0, state.player.dashCooldown - dt);
   state.player.dashTime = Math.max(0, state.player.dashTime - dt);
@@ -1146,8 +1281,10 @@ function updateBoss(dt) {
     boss.attackCooldown = boss.phase === 2 ? 1.75 : 2.5;
   }
   if (boss.summonCooldown <= 0 && state.enemies.length < 7) {
-    spawnEnemy(ENEMY_TYPES.bot, [boss.x + random(-6, 6), boss.z + random(4, 8)]);
-    if (boss.phase === 2) spawnEnemy(ENEMY_TYPES.farmer, [boss.x + random(-7, 7), boss.z + random(3, 8)]);
+    spawnEnemy(ENEMY_TYPES.bot, [boss.x + random(-6, 6), boss.z + random(4, 8)], undefined, true);
+    if (boss.phase === 2 && state.enemies.length < 7) {
+      spawnEnemy(ENEMY_TYPES.farmer, [boss.x + random(-7, 7), boss.z + random(3, 8)], undefined, true);
+    }
     boss.summonCooldown = boss.phase === 2 ? 7.2 : 9.5;
   }
   boss.group.position.set(boss.x, Math.sin(state.visualTime * 1.6) * 0.3, boss.z);
@@ -1212,9 +1349,9 @@ function collectPickup(pickup) {
     state.player.armor = Math.min(state.player.maxArmor, state.player.armor + 24);
     setMessage("ARMOR BUFFER", 1.2);
   } else {
-    state.score += 260;
+    state.score += pickup.points;
     state.player.pulseCooldown = Math.max(0, state.player.pulseCooldown - 2.4);
-    setMessage("SUI SHARD — PULSE CHARGED", 1.2);
+    setMessage("PULSE CHARGE COLLECTED", 1.2);
   }
   audio.pickup();
   burstParticles(pickup.x, 1, pickup.z, pickup.kind === "health" ? palette.green : palette.sui, 20, 0.45, 4.5);
@@ -1230,8 +1367,9 @@ function damagePlayer(amount) {
   state.cameraShake = Math.max(state.cameraShake, 0.3);
   audio.hurt();
   if (state.player.health <= 0) {
-    state.phase = "gameover";
+    setPhase("gameover");
     state.objective = "The FUD machine held the line.";
+    clearInput();
     releaseMouseLook();
     burstParticles(state.player.x, 1.2, state.player.z, palette.danger, 55, 0.9, 7);
   }
@@ -1240,7 +1378,7 @@ function damagePlayer(amount) {
 function updatePlayerModel(dt) {
   playerModel.position.set(state.player.x, 0, state.player.z);
   playerModel.rotation.y = state.player.yaw;
-  playerModel.visible = state.cameraMode !== "first";
+  playerModel.visible = state.cameraMode !== "first" || state.phase === "ready";
   firstPersonWeapon.visible = state.cameraMode === "first" && ["playing", "paused"].includes(state.phase);
   firstPersonWeapon.position.set(0.44, -0.54 - state.player.recoil * 0.06, -0.84 + state.player.recoil * 0.32);
   firstPersonWeapon.rotation.x = state.player.recoil * 0.26;
@@ -1285,7 +1423,7 @@ function updateCamera(dt) {
   const shake = state.cameraShake > 0 ? state.cameraShake * 0.22 : 0;
   let desiredEye;
   let desiredTarget;
-  if (state.cameraMode === "first") {
+  if (state.cameraMode === "first" && state.phase !== "ready") {
     desiredEye = tmpA.set(state.player.x - forward.x * state.player.recoil, 1.76 + state.player.recoil * 0.4, state.player.z - forward.z * state.player.recoil);
     desiredTarget = tmpB.set(state.player.x + forward.x * 12, 1.62, state.player.z + forward.z * 12);
   } else {
@@ -1347,6 +1485,9 @@ function separateEnemies() {
 function animateWorld(dt) {
   const atmosphere = worldRoot.getObjectByName("atmosphere");
   if (atmosphere) atmosphere.rotation.y += dt * 0.008;
+  friendlyCreatures.forEach((creature, index) => {
+    creature.scale.y = 1.26 + Math.sin(state.visualTime * 1.5 + index) * 0.018;
+  });
   if (gate && !gate.open) gate.field.material.opacity = 0.25 + Math.sin(state.visualTime * 5) * 0.11;
   for (const relay of relays) {
     if (!relay.group.visible) continue;
@@ -1363,18 +1504,33 @@ function animateWorld(dt) {
   }
 }
 
-function muzzleBurst(origin, direction) {
-  burstParticles(origin.x + direction.x, origin.y, origin.z + direction.z, palette.sui, 7, 0.18, 2.7);
+function muzzleBurst(origin, direction, color) {
+  burstParticles(origin.x + direction.x, origin.y, origin.z + direction.z, color, 7, 0.18, 2.7);
 }
 
-function addTracer(start, end, color) {
+function addTracer(start, end, color, water) {
   const geometry = new THREE.BufferGeometry().setFromPoints([start.clone(), end.clone()]);
   const line = new THREE.Line(
     geometry,
     new THREE.LineBasicMaterial({ color, transparent: true, opacity: 1, blending: THREE.AdditiveBlending })
   );
   dynamicRoot.add(line);
-  state.tracers.push({ line, life: 0.09, maxLife: 0.09 });
+  const life = water ? 0.16 : 0.09;
+  const tracer = { line, life, maxLife: life };
+  if (water) {
+    tracer.start = start.clone();
+    tracer.end = end.clone();
+    tracer.mesh = waterDrop.clone();
+    tracer.mesh.position.copy(start);
+    dynamicRoot.add(tracer.mesh);
+  }
+  state.tracers.push(tracer);
+}
+
+function disposeTracer(tracer) {
+  tracer.line.geometry.dispose();
+  tracer.line.material.dispose();
+  dynamicRoot.remove(tracer.line);
 }
 
 function updateTracers(dt) {
@@ -1382,10 +1538,15 @@ function updateTracers(dt) {
     const tracer = state.tracers[index];
     tracer.life -= dt;
     tracer.line.material.opacity = clamp(tracer.life / tracer.maxLife, 0, 1);
+    if (tracer.mesh) tracer.mesh.position.lerpVectors(tracer.start, tracer.end, clamp(1 - tracer.life / tracer.maxLife, 0, 1));
     if (tracer.life <= 0) {
-      tracer.line.geometry.dispose();
-      tracer.line.material.dispose();
-      dynamicRoot.remove(tracer.line);
+      if (tracer.mesh) {
+        const { x, y, z } = tracer.end;
+        burstParticles(x, y, z, WEAPONS.riptide.color, 24, 0.52, 5.4);
+        addShockwave(x, z, WEAPONS.riptide.color, 4.1);
+        dynamicRoot.remove(tracer.mesh);
+      }
+      disposeTracer(tracer);
       state.tracers.splice(index, 1);
     }
   }
@@ -1426,7 +1587,9 @@ function updateParticles(dt) {
     particle.mesh.position.set(particle.x, particle.y, particle.z);
     particle.mesh.rotation.x += dt * 7;
     particle.mesh.rotation.y += dt * 6;
-    particle.mesh.material.opacity = clamp(particle.life / particle.maxLife, 0, 1);
+    const distance = particle.mesh.position.distanceToSquared(camera.position);
+    const nearFade = clamp((distance - 0.36) / 2.2, 0, 1);
+    particle.mesh.material.opacity = clamp(particle.life / particle.maxLife, 0, 1) * nearFade;
     if (particle.life <= 0 || particle.y < -0.2) {
       particle.mesh.geometry.dispose();
       particle.mesh.material.dispose();
@@ -1472,7 +1635,7 @@ function setMessage(message, duration = 1.5) {
 function render() {
   resize();
   collectLabels();
-  if (QA_MODE) renderer.render(scene, camera);
+  if (state.quality === "low") renderer.render(scene, camera);
   else composer.render();
   drawHud();
 }
@@ -1545,6 +1708,7 @@ function drawHud() {
     if (boss) drawBossBar(width);
     if (state.stageBanner > 0) drawStageBanner(width, height);
     if (state.messageTimer > 0) drawMessage(width, height);
+    if (state.phase === "playing" && state.rickrollTimer > 0) drawRickroll(width, height);
   }
   if (state.phase !== "ready" && state.hitFlash > 0) {
     const strength = clamp(state.hitFlash / 0.22, 0, 1);
@@ -1555,7 +1719,7 @@ function drawHud() {
     ui.fillRect(0, 0, width, height);
   }
   if (state.phase === "ready") drawStartScreen(width, height);
-  if (state.phase === "paused") drawCenterPanel(width, height, "PAUSED", "P resumes · R restarts · Esc releases mouse");
+  if (state.phase === "paused") drawCenterPanel(width, height, "PAUSED", "P resumes  /  R restarts");
   if (state.phase === "gameover") drawEndScreen(width, height, false);
   if (state.phase === "victory") drawEndScreen(width, height, true);
   ui.restore();
@@ -1565,27 +1729,35 @@ function drawStatusHud(width, height) {
   const compact = width < 700 || height < 390;
   const x = compact ? 10 : 18;
   const y = compact ? 9 : 16;
-  const panelWidth = compact ? Math.min(300, width - 120) : 360;
+  const panelWidth = compact ? Math.min(245, width - 120) : Math.min(304, width * 0.28);
   const panelHeight = compact ? 62 : 92;
   drawPanel(x, y, panelWidth, panelHeight, 0.72, "#65d7ff");
   ui.fillStyle = "#f4fbff";
   ui.font = compact ? "900 12px system-ui" : "900 16px system-ui";
-  ui.fillText("SuiTrump: FUD Breach", x + 14, y + (compact ? 20 : 25));
+  const chainActive = state.chain > 1 && state.time < state.chainUntil;
+  if (chainActive) ui.fillStyle = "#ffd45f";
+  ui.fillText(chainActive ? `${state.chain} TAKEDOWNS  ×${chainMultiplier(state.chain)}` : "FUD BREACH", x + 14, y + (compact ? 20 : 25));
   ui.fillStyle = "#8fa9c3";
   ui.font = compact ? "700 9px system-ui" : "700 11px system-ui";
-  ui.fillText(`SCORE ${state.score}  ·  KOs ${state.kills}  ·  ${state.cameraMode.toUpperCase()}`, x + 14, y + (compact ? 36 : 44));
+  const weaponLabel = WEAPONS[state.weapon].label;
+  const recharge = state.weapon === "rickroll" && state.player.rickrollCooldown > 0 ? ` (${Math.ceil(state.player.rickrollCooldown)}s)` : "";
+  ui.fillText(`${state.score.toLocaleString()} PTS  ·  ${weaponLabel}${recharge}`, x + 14, y + (compact ? 36 : 44), panelWidth - 28);
 
-  const barWidth = compact ? panelWidth - 28 : 230;
+  const barWidth = panelWidth - (compact ? 28 : 86);
   const healthY = y + (compact ? 44 : 57);
   drawBar(x + 14, healthY, barWidth, compact ? 6 : 8, state.player.health / state.player.maxHealth, state.player.health > 35 ? "#65d7ff" : "#ff4268");
+  if (chainActive) {
+    drawBar(x + 14, y + panelHeight - 4, panelWidth - 28, 2, (state.chainUntil - state.time) / CHAIN_WINDOW, "#ffd45f");
+  }
   if (!compact) {
     drawBar(x + 14, y + 72, barWidth, 6, state.player.armor / state.player.maxArmor, "#ffd45f");
     ui.fillStyle = "#9db4ca";
     ui.font = "800 9px system-ui";
-    ui.fillText(`HP ${Math.ceil(state.player.health)}  ARMOR ${Math.ceil(state.player.armor)}`, x + 252, y + 67);
+    ui.fillText(`HP ${Math.ceil(state.player.health)}`, x + panelWidth - 61, y + 65);
+    ui.fillText(`ARMOR ${Math.ceil(state.player.armor)}`, x + panelWidth - 61, y + 80);
   }
 
-  const abilityWidth = compact ? 92 : 210;
+  const abilityWidth = compact ? 92 : 172;
   const abilityX = width - abilityWidth - (compact ? 10 : 18);
   drawPanel(abilityX, y, abilityWidth, panelHeight, 0.68, "#ffd45f");
   ui.fillStyle = "#ffd45f";
@@ -1593,7 +1765,7 @@ function drawStatusHud(width, height) {
   ui.fillText(compact ? "DASH" : "DASH · SHIFT/Q", abilityX + 12, y + 21);
   drawBar(abilityX + 12, y + 29, abilityWidth - 24, 6, 1 - state.player.dashCooldown / 2.6, "#ffd45f");
   ui.fillStyle = "#65d7ff";
-  ui.fillText(compact ? "PULSE" : "SUI PULSE · E/RMB", abilityX + 12, y + (compact ? 47 : 55));
+  ui.fillText(compact ? "PULSE" : "PULSE · E/RMB", abilityX + 12, y + (compact ? 47 : 55));
   drawBar(abilityX + 12, y + (compact ? 52 : 64), abilityWidth - 24, 6, 1 - state.player.pulseCooldown / 8, "#65d7ff");
   if (!compact) {
     ui.fillStyle = "#7f96ad";
@@ -1605,14 +1777,19 @@ function drawStatusHud(width, height) {
 function drawObjective(width, height) {
   if (state.phase === "ready") return;
   const compact = width < 700 || height < 390;
-  const panelWidth = Math.min(compact ? width - 150 : 630, width - 36);
+  const panelWidth = compact ? Math.min(width - 150, 385) : Math.min(510, width * 0.4);
   const x = (width - panelWidth) / 2;
   const y = compact ? height - 39 : 18;
   drawPanel(x, y, panelWidth, compact ? 30 : 44, 0.58, "#65d7ff");
   ui.textAlign = "center";
   ui.fillStyle = "#dcecff";
   ui.font = compact ? "800 10px system-ui" : "800 12px system-ui";
-  ui.fillText(shorten(state.objective, compact ? 52 : 88), width / 2, y + (compact ? 19 : 27));
+  const remaining = state.stage === "breach" ? state.enemies.length : relays.filter((relay) => relay.active).length;
+  const objective = state.stage === "breach" ? `CLEAR THE PERIMETER   /   ${remaining} LEFT`
+    : state.stage === "relays" ? `CUT THE SIGNAL   /   ${remaining} RELAYS LEFT`
+    : state.stage === "boss" ? "TAKE OUT THE MACHINE"
+    : "REACH EXTRACTION";
+  ui.fillText(objective, width / 2, y + (compact ? 19 : 27), panelWidth - 16);
   ui.textAlign = "left";
 }
 
@@ -1685,14 +1862,14 @@ function drawRadar(width, height) {
 
 function drawBossBar(width) {
   if (!boss) return;
-  const barWidth = Math.min(600, width - 80);
+  const barWidth = Math.min(456, width * 0.54);
   const x = (width - barWidth) / 2;
   const y = 76;
   drawPanel(x, y, barWidth, 40, 0.7, "#ff4268");
   ui.textAlign = "center";
   ui.fillStyle = "#fff4f7";
   ui.font = "900 11px system-ui";
-  ui.fillText("MAINSTREAM MEDIA MACHINE", width / 2, y + 16);
+  ui.fillText(`MAINSTREAM MEDIA MACHINE  /  PHASE ${boss.phase}`, width / 2, y + 16, barWidth - 16);
   drawBar(x + 18, y + 24, barWidth - 36, 8, boss.health / boss.maxHealth, "#ff4268");
   ui.textAlign = "left";
 }
@@ -1736,31 +1913,52 @@ function drawStartScreen(width, height) {
   ui.textAlign = "center";
   ui.fillStyle = "#65d7ff";
   ui.font = compact ? "900 12px system-ui" : "900 16px system-ui";
-  ui.fillText("A SINGLE-PLAYER SUI ARCADE MISSION", width / 2, y + (compact ? 24 : 38));
+  ui.fillText("SUITRUMP", width / 2, y + (compact ? 24 : 38));
   ui.fillStyle = "#ffd45f";
   ui.font = compact ? "900 28px system-ui" : "900 54px system-ui";
   ui.fillText("FUD BREACH", width / 2, y + (compact ? 59 : 102));
   ui.fillStyle = "#e8f4ff";
   ui.font = compact ? "800 11px system-ui" : "800 18px system-ui";
-  ui.fillText("Break the signal. Crush the machine. Reach extraction.", width / 2, y + (compact ? 83 : 142));
+  ui.fillText("Cut the relays. Break the machine. Get out.", width / 2, y + (compact ? 83 : 142));
   ui.fillStyle = "#9eb5ca";
   ui.font = compact ? "700 9px system-ui" : "700 13px system-ui";
   if (!matchMedia("(pointer: coarse)").matches) {
-    ui.fillText("WASD move · Mouse aim/fire · Shift dash · E pulse", width / 2, y + (compact ? 110 : 196));
-    ui.fillText("V camera · P pause · F fullscreen · G graphics · U audio", width / 2, y + (compact ? 128 : 222));
+    ui.fillText("WASD move · Mouse turns · Click/Space fires · Shift dash · E pulse", width / 2, y + (compact ? 110 : 196), panelWidth - 26);
+    ui.fillText("1–3 weapons · V camera · P pause · G graphics", width / 2, y + (compact ? 128 : 222));
   } else {
     ui.fillText("Left stick moves · Right stick aims and fires", width / 2, y + (compact ? 110 : 196));
-    ui.fillText("Use DASH and PULSE to break through", width / 2, y + (compact ? 128 : 222));
+    ui.fillText("Dash · Pulse · Tap weapon name to switch", width / 2, y + (compact ? 128 : 222));
   }
-  ui.fillStyle = "#65d7ff";
-  ui.font = compact ? "900 12px system-ui" : "900 17px system-ui";
-  ui.fillText(matchMedia("(pointer: coarse)").matches ? "TAP DASH TO DEPLOY" : "CLICK OR PRESS SPACE TO DEPLOY", width / 2, y + (compact ? 164 : 294));
+  if (state.bestScore > 0 && !compact) {
+    ui.fillStyle = "#ffd45f";
+    ui.fillText(`PERSONAL BEST  ${state.bestScore.toLocaleString()}`, width / 2, y + 260);
+  }
   ui.textAlign = "left";
+}
+
+function drawRickroll(width, height) {
+  const panelWidth = Math.min(340, width - 50);
+  const x = (width - panelWidth) / 2;
+  const y = height * 0.66;
+  ui.save();
+  ui.globalAlpha = clamp(state.rickrollTimer * 3.5, 0, 1);
+  drawPanel(x, y, panelWidth, 58, 0.92, "#ea97ff");
+  const bars = ["#65d7ff", "#cb7bff", "#ff738f", "#ffdc78"];
+  bars.forEach((color, index) => {
+    ui.fillStyle = color;
+    ui.fillRect(x + 16 + index * 6, y + 16, 4, 25);
+  });
+  ui.fillStyle = "#f4dcff";
+  ui.font = "900 22px system-ui";
+  ui.textAlign = "center";
+  ui.fillText("RICKROLLED", width / 2 + 10, y + 37);
+  ui.restore();
 }
 
 function drawEndScreen(width, height, won) {
   const panelWidth = Math.min(620, width - 42);
-  const panelHeight = Math.min(330, height - 42);
+  const compact = width < 700 || height < 390;
+  const panelHeight = Math.min(compact ? 245 : 330, height - 10);
   const x = (width - panelWidth) / 2;
   const y = (height - panelHeight) / 2;
   drawPanel(x, y, panelWidth, panelHeight, 0.86, won ? "#ffd45f" : "#ff4268");
@@ -1768,16 +1966,17 @@ function drawEndScreen(width, height, won) {
   const rank = calculateRank();
   ui.textAlign = "center";
   ui.fillStyle = won ? "#ffd45f" : "#ff6680";
-  ui.font = width < 700 ? "900 27px system-ui" : "900 42px system-ui";
-  ui.fillText(won ? "BREACH COMPLETE" : "FUD HELD THE LINE", width / 2, y + 66);
+  ui.font = compact ? "900 21px system-ui" : "900 37px system-ui";
+  ui.fillText(won ? "BREACH COMPLETE" : "FUD HELD THE LINE", width / 2, y + panelHeight * 0.18);
   ui.fillStyle = "#65d7ff";
-  ui.font = width < 700 ? "900 38px system-ui" : "900 60px system-ui";
-  ui.fillText(won ? rank : "RETRY", width / 2, y + 132);
+  ui.font = compact ? "900 27px system-ui" : "900 54px system-ui";
+  ui.fillText(won ? rank : "SIGNAL LOST", width / 2, y + panelHeight * 0.38);
   ui.fillStyle = "#dbeaff";
-  ui.font = width < 700 ? "800 11px system-ui" : "800 14px system-ui";
-  ui.fillText(`SCORE ${state.score}  ·  TIME ${formatTime(state.time)}  ·  KOs ${state.kills}  ·  ACCURACY ${accuracy}%`, width / 2, y + 174);
-  ui.fillStyle = "#9fb6cb";
-  ui.fillText("Press R for a clean run or Space to redeploy.", width / 2, y + 218);
+  ui.font = compact ? "800 10px system-ui" : "800 15px system-ui";
+  ui.fillText(`${state.score.toLocaleString()} PTS  ·  ${formatTime(state.time)}  ·  ${state.kills} KOs  ·  ${accuracy}% ACC`, width / 2, y + panelHeight * 0.54);
+  ui.fillStyle = state.newBest ? "#ffd45f" : "#9fb6cb";
+  const best = state.newBest ? "NEW PERSONAL BEST" : state.bestScore ? `BEST ${state.bestScore.toLocaleString()}` : "NO CLEARS YET";
+  ui.fillText(`${best}  ·  LONGEST CHAIN ${state.peakChain}`, width / 2, y + panelHeight * 0.66);
   ui.textAlign = "left";
 }
 
@@ -1797,18 +1996,28 @@ function drawCenterPanel(width, height, title, subtitle) {
 }
 
 function drawPanel(x, y, width, height, alpha, accent) {
+  const cut = Math.min(10, height * 0.23);
+  ui.save();
+  ui.beginPath();
+  ui.moveTo(x + cut, y);
+  ui.lineTo(x + width, y);
+  ui.lineTo(x + width, y + height - cut);
+  ui.lineTo(x + width - cut, y + height);
+  ui.lineTo(x, y + height);
+  ui.lineTo(x, y + cut);
+  ui.closePath();
   const gradient = ui.createLinearGradient(x, y, x + width, y + height);
-  gradient.addColorStop(0, `rgba(3,8,18,${alpha})`);
-  gradient.addColorStop(1, `rgba(8,21,40,${alpha * 0.9})`);
+  gradient.addColorStop(0, `rgba(8,14,26,${alpha})`);
+  gradient.addColorStop(1, `rgba(14,27,46,${alpha * 0.9})`);
   ui.fillStyle = gradient;
-  ui.fillRect(x, y, width, height);
+  ui.fill();
   ui.strokeStyle = accent;
-  ui.globalAlpha = 0.42;
+  ui.globalAlpha *= 0.4;
   ui.lineWidth = 1;
-  ui.strokeRect(x + 0.5, y + 0.5, width - 1, height - 1);
+  ui.stroke();
   ui.fillStyle = accent;
-  ui.fillRect(x, y, 3, height);
-  ui.globalAlpha = 1;
+  ui.fillRect(x + cut, y, Math.min(34, width - cut), 2);
+  ui.restore();
 }
 
 function drawBar(x, y, width, height, amount, color) {
@@ -1839,21 +2048,16 @@ function project(x, y, z, width, height) {
 function calculateRank() {
   const accuracy = state.shots > 0 ? state.hits / state.shots : 0;
   const score = state.score + Math.max(0, 6000 - state.time * 24) + accuracy * 1800 + state.player.health * 10;
-  if (score >= 14500) return "SUI LEGEND";
-  if (score >= 11000) return "DIAMOND HANDS";
-  if (score >= 8000) return "FUD BREAKER";
-  return "SURVIVOR";
+  if (score >= 20500) return "S  /  VANGUARD";
+  if (score >= 16500) return "A  /  SIGNAL BREAKER";
+  if (score >= 12500) return "B  /  OPERATOR";
+  return "C  /  SURVIVOR";
 }
 
 function formatTime(seconds) {
   const minutes = Math.floor(seconds / 60);
   const remainder = Math.floor(seconds % 60).toString().padStart(2, "0");
   return `${minutes}:${remainder}`;
-}
-
-function shorten(text, maxLength) {
-  if (text.length <= maxLength) return text;
-  return `${text.slice(0, Math.max(0, maxLength - 1))}…`;
 }
 
 function resolveWorldCollision(entity, radius) {
@@ -1949,8 +2153,16 @@ window.render_game_to_text = () => {
     objective: state.objective,
     time: round(state.time),
     score: state.score,
+    bestScore: state.bestScore,
+    chain: {
+      count: state.time < state.chainUntil ? state.chain : 0,
+      multiplier: chainMultiplier(state.time < state.chainUntil ? state.chain : 0),
+      peak: state.peakChain,
+    },
     kills: state.kills,
     cameraMode: state.cameraMode,
+    weapon: state.weapon,
+    rickrollActive: state.rickrollTimer > 0,
     quality: state.quality,
     player: {
       x: round(state.player.x),
@@ -1960,19 +2172,26 @@ window.render_game_to_text = () => {
       health: Math.ceil(state.player.health),
       armor: Math.ceil(state.player.armor),
       shotCooldown: round(state.player.shotCooldown),
+      rickrollCooldown: round(state.player.rickrollCooldown),
       dashCooldown: round(state.player.dashCooldown),
       pulseCooldown: round(state.player.pulseCooldown),
     },
     enemies: state.enemies.slice(0, 12).map((enemy) => ({ id: enemy.id, kind: enemy.kind.id, x: round(enemy.x), z: round(enemy.z), health: enemy.health })),
     relays: relays.filter((relay) => relay.active).map((relay) => ({ id: relay.id, x: relay.x, z: relay.z, health: relay.health })),
-    boss: boss ? { health: boss.health, maxHealth: boss.maxHealth, x: round(boss.x), z: round(boss.z), phase: boss.phase } : null,
+    boss: boss ? {
+      health: boss.health,
+      maxHealth: boss.maxHealth,
+      x: round(boss.x),
+      z: round(boss.z),
+      phase: boss.phase,
+    } : null,
     extraction: extraction?.active ? { x: extraction.x, z: extraction.z } : null,
     enemyProjectiles: state.enemyShots.length,
     pickups: state.pickups.map((pickup) => ({ kind: pickup.kind, x: round(pickup.x), z: round(pickup.z) })),
   });
 };
 
-if (query.get("test") === "1" || QA_MODE) {
+if (TEST_MODE) {
   window.__fudBreachTest = {
     clearEnemies() {
       for (const enemy of [...state.enemies]) {

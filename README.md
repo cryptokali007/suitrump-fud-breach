@@ -1,8 +1,14 @@
 # SuiTrump: FUD Breach
 
-SuiTrump: FUD Breach is a desktop-first, single-player 3D browser shooter built with Three.js and Vite. It combines fast arcade combat, a complete objective chain, a multi-phase boss, extraction, rank scoring, desktop mouse-look, procedural audio, and a functional landscape-touch baseline.
+SuiTrump: FUD Breach is a standalone, single-player Three.js arcade shooter by [cryptokali007](https://github.com/cryptokali007). Take the blue mascot through the broadcast facility, clear the FUD defenders, cut the relays, and defeat the Mainstream Media Machine before extraction.
 
 The project is fully local and static. It has no wallet, chain, RPC, account, analytics, CDN, backend, API key, or cloud dependency.
+
+## Play the offline build
+
+Open `SuiTrump-FUD-Breach.html` in a desktop browser with WebGL 2. The file contains the game, styles, and renderer. The bundled file's Content Security Policy blocks network connections.
+
+To create it from source, run `npm ci` and `npm run build:offline`. The default output is `dist-offline/SuiTrump-FUD-Breach.html`.
 
 ## Requirements
 
@@ -43,17 +49,26 @@ The launcher starts Vite and opens Brave, with Mullvad Browser as the fallback. 
 | Move | `WASD` |
 | Look | Mouse after clicking the game; arrow keys are a fallback |
 | Fire | Left mouse or `Space` |
+| Select a weapon | `1` Repeater, `2` Riptide, `3` Rickroll |
 | Dash | `Shift` or `Q` |
 | SUI pulse | `E` or right mouse |
 | First/third person | `V` |
-| Pause/resume | `P` |
+| Pause/resume | `P` or the Resume button |
 | Restart | `R` |
 | Graphics quality | `G` |
 | Audio | `U` |
 | Fullscreen | `F` |
-| Release mouse | `Esc` |
+| Release mouse and pause | `Esc` |
 
-PC is the primary target. On touch devices, the existing baseline uses a left movement pad, right aim/fire pad, and Dash/Pulse buttons. Landscape is supported; portrait intentionally shows a rotate prompt.
+PC is the primary target. Missions start in first person. Press `V` for the chase camera. Touch devices in landscape use a left movement pad, right aim/fire pad, and Dash, Pulse, Pause, and weapon buttons.
+
+The Repeater fires quickly. Riptide deals heavier damage and splashes nearby targets. Rickroll disables a scam bot or rug runner on a direct hit and takes ten seconds to recharge.
+
+The pulse-charge sprite is adapted from the first frame of MMAC's SUI motion atlas and embedded in the build.
+
+## Scoring
+
+Chain takedowns within four seconds to build a multiplier up to 2×. Destroying relays, defeating the boss, and extracting quickly add points. Boss reinforcements can drop supplies. Clearing the mission records a personal best in the current browser. The result screen shows points, clearance time, accuracy, KOs, longest chain, and rank.
 
 ## Build and verify
 
@@ -69,6 +84,7 @@ npx playwright install chromium
 npm run test:mission
 npm run test:controls
 npm run test:mobile
+npm run test:combat
 ```
 
 Create the automated 720p showcase capture with the WebGL scene, HUD, and procedural audio mixed into one WebM:
@@ -85,6 +101,7 @@ The game exposes `window.render_game_to_text()` and deterministic `window.advanc
 
 ```text
 src/
+  arena-art.js
   audio.js
   bootstrap.js
   config.js
@@ -96,8 +113,4 @@ tools/
 
 `src/` contains the game runtime, procedural models, mission logic, rendering, input, HUD, and audio. `tools/` contains project-owned Playwright review and showcase-capture scripts.
 
-Live operational state is in `PROJECT_STATUS.md`; implementation history is in `progress.md`.
-
-## Repository status
-
-This repository is currently a private source handoff for project collaborators. No public license has been selected yet; choose one deliberately before changing the repository to public.
+See [project status](PROJECT_STATUS.md) for the current build and [progress notes](progress.md) for implementation history.

@@ -29,6 +29,7 @@ body {
 
 #game-shell {
   position: relative;
+  container-type: size;
   width: min(100vw, 177.78vh);
   height: min(100vh, 56.25vw);
   min-width: 320px;
@@ -58,6 +59,48 @@ body {
 #hud-canvas,
 .scanlines {
   pointer-events: none;
+}
+
+#mission-action {
+  position: absolute;
+  z-index: 2;
+  top: min(calc(50% + 115px), calc(100% - 48px));
+  left: 50%;
+  width: 176px;
+  min-height: 42px;
+  transform: translateX(-50%);
+  border: 1px solid #b8efff;
+  border-radius: 4px;
+  color: #031424;
+  background: #65d7ff;
+  box-shadow: 0 0 20px rgb(101 215 255 / 30%);
+  font: 900 14px/1.2 system-ui;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+#mission-action:hover {
+  background: #c4f2ff;
+}
+
+#mission-action:focus-visible,
+#pause-button:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 4px;
+}
+
+#game-shell[data-phase="paused"] #mission-action {
+  top: calc(50% + 14px);
+}
+
+@container (width < 700px) or (height < 390px) {
+  #mission-action {
+    top: min(calc(50% + 48px), calc(100% - 36px));
+    width: 140px;
+    min-height: 32px;
+    font-size: 12px;
+  }
 }
 
 .scanlines {
@@ -129,6 +172,7 @@ body {
 
 .startup-failed #game-canvas,
 .startup-failed #hud-canvas,
+.startup-failed #mission-action,
 .startup-failed #touch-controls,
 .startup-failed #rotate-prompt {
   visibility: hidden;
@@ -230,6 +274,33 @@ body {
   height: 58px;
 }
 
+#pause-button,
+#weapon-button {
+  display: none;
+  right: auto;
+  left: max(24px, env(safe-area-inset-left));
+  bottom: max(144px, calc(env(safe-area-inset-bottom) + 144px));
+  min-width: 64px;
+  min-height: 36px;
+  color: #ddf7ff;
+  border-color: rgb(101 215 255 / 52%);
+  background: rgb(4 13 28 / 85%);
+}
+
+#game-shell[data-phase="playing"] #pause-button {
+  display: block;
+}
+
+#weapon-button {
+  right: max(24px, env(safe-area-inset-right));
+  left: auto;
+  width: 78px;
+}
+
+#game-shell[data-phase="playing"] #weapon-button {
+  display: block;
+}
+
 @media (pointer: coarse), (max-width: 760px) {
   #touch-controls {
     display: block;
@@ -264,6 +335,11 @@ body {
 
   .touch-button {
     right: max(122px, calc(env(safe-area-inset-right) + 122px));
+  }
+
+  #pause-button,
+  #weapon-button {
+    bottom: max(120px, calc(env(safe-area-inset-bottom) + 120px));
   }
 }
 
